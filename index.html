@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intellifi Topology</title>
+    <link rel="stylesheet" href="styles.css?v=79">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-logo">
+            <svg class="logo-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="5" r="3"/>
+                <circle cx="5" cy="19" r="3"/>
+                <circle cx="19" cy="19" r="3"/>
+                <line x1="12" y1="8" x2="5" y2="16"/>
+                <line x1="12" y1="8" x2="19" y2="16"/>
+            </svg>
+            <span>Topology</span>
+        </div>
+        <div class="sidebar-nav">
+            <a class="nav-item active" data-view="topology">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="5" r="2.5"/>
+                    <circle cx="5" cy="19" r="2.5"/>
+                    <circle cx="19" cy="19" r="2.5"/>
+                    <line x1="12" y1="7.5" x2="5" y2="16.5"/>
+                    <line x1="12" y1="7.5" x2="19" y2="16.5"/>
+                </svg>
+                <span>Map</span>
+            </a>
+            <a class="nav-item" data-view="clients">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                <span>Clients</span>
+            </a>
+            <a class="nav-item" data-view="time-machine" id="tmNavItem">
+                <i class="ph-duotone ph-clock-clockwise" style="font-size:18px"></i>
+                <span>History</span>
+            </a>
+        </div>
+        <div class="sidebar-footer">
+            <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+                <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="top-bar-left">
+                <h1>Network Topology</h1>
+                <span class="badge badge-online">All Systems Online</span>
+            </div>
+            <div class="top-bar-right">
+                <div class="stat-pill">
+                    <span class="stat-label">Devices</span>
+                    <span class="stat-value" id="deviceCount">0</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">Clients</span>
+                    <span class="stat-value" id="clientCount">0</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">Throughput</span>
+                    <span class="stat-value" id="totalThroughput">0 Mbps</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Topology Canvas -->
+        <div class="topology-container" id="topologyContainer">
+            <svg class="topology-svg" id="topologySvg">
+                <defs>
+                    <!-- Glow filter for connection lines -->
+                    <filter id="glow">
+                        <feGaussianBlur stdDeviation="2" result="blur"/>
+                        <feMerge>
+                            <feMergeNode in="blur"/>
+                            <feMergeNode in="SourceGraphic"/>
+                        </feMerge>
+                    </filter>
+                    <!-- Arrow markers -->
+                    <marker id="arrowDown" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent-cyan)"/>
+                    </marker>
+                    <!-- Cloud shape from cloud1.svg (viewBox 0 0 50.7634 26.2437, scaled to objectBoundingBox) -->
+                    <clipPath id="cloud-clip" clipPathUnits="objectBoundingBox"
+                              transform="scale(0.0197, 0.0381)">
+                        <path d="M43.7724,26.1187c3.792,0,6.866-3.074,6.866-6.866,0-3.308-2.34-6.069-5.455-6.72.036-.29.06-.583.06-.882,0-3.928-3.184-7.111-7.111-7.111-2.319,0-4.372,1.115-5.67,2.832-.332-4.372-4.237-7.745-8.806-7.186-3.341.409-6.104,2.991-6.719,6.3-.197,1.061-.177,2.092.02,3.058-.896-.965-2.171-1.572-3.591-1.572-2.599,0-4.72,2.023-4.888,4.58-1.18-.261-2.464-.244-3.816.263C2.0784,13.7847.2374,16.2177.1304,18.9757c-.153,3.917,2.977,7.141,6.86,7.141h5.828s24.4396.0011,24.434.002h6.52Z"/>
+                    </clipPath>
+                </defs>
+            </svg>
+            <div class="topology-nodes" id="topologyNodes"></div>
+            <!-- Time Machine Playback Bar -->
+            <div class="tm-playback-bar" id="tmPlaybackBar">
+                <div class="tm-controls">
+                    <button class="tm-btn" id="tmSkipStart" title="Skip to start"><i class="ph-bold ph-skip-back"></i></button>
+                    <button class="tm-btn" id="tmStepBack" title="Step back"><i class="ph-bold ph-caret-left"></i></button>
+                    <button class="tm-btn tm-btn-play" id="tmPlayPause" title="Play"><i class="ph-bold ph-play"></i></button>
+                    <button class="tm-btn" id="tmStepFwd" title="Step forward"><i class="ph-bold ph-caret-right"></i></button>
+                    <button class="tm-btn" id="tmSkipEnd" title="Skip to end"><i class="ph-bold ph-skip-forward"></i></button>
+                </div>
+                <div class="tm-timeline">
+                    <input type="range" class="tm-slider" id="tmSlider" min="0" max="47" value="0">
+                </div>
+                <div class="tm-info">
+                    <span class="tm-timestamp" id="tmTimestamp">--:--</span>
+                    <button class="tm-btn tm-btn-speed" id="tmSpeed" title="Playback speed">1×</button>
+                    <button class="tm-btn tm-btn-interval" id="tmInterval" title="Sample interval">60s</button>
+                </div>
+                <button class="tm-btn tm-btn-exit" id="tmExit" title="Exit Time Machine"><i class="ph-bold ph-x"></i></button>
+            </div>
+        </div>
+
+        <!-- Detail Panel (slide-out) -->
+        <aside class="detail-panel" id="detailPanel">
+            <div class="detail-header">
+                <h2 id="detailTitle">Device Details</h2>
+                <button class="detail-close" id="detailClose">&times;</button>
+            </div>
+            <div class="detail-body" id="detailBody"></div>
+        </aside>
+    </main>
+
+    <script src="app.js?v=79"></script>
+</body>
+</html>
