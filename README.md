@@ -2,7 +2,7 @@
 
 A real-time network topology visualization for Intellifi SmartOS mesh networks. Displays gateway, satellite, and client devices in an interactive hierarchical map with live throughput, signal quality, and connection status.
 
-![Topology Overview](screenshots/readme-screenshot1.png)
+![Topology Overview](screenshots/readme-screenshot2.png)
 
 ## Features
 
