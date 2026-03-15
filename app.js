@@ -350,7 +350,7 @@ let animationFrameId = null;
 let connections = []; // { fromEl, toEl, fromId, toId, traffic }
 let simplifiedView = false;
 let userToggledView = false; // true if user manually toggled, prevents auto-override
-let layoutGraph = null; // dagre graph with computed positions
+let layoutGraph = null; // LayoutGraph with computed positions
 
 // ── ISP Resolution ────────────────────────────────
 async function resolveIsp(device) {
@@ -369,101 +369,359 @@ async function resolveIsp(device) {
     }
 }
 
-// ── dagre Layout Engine ──────────────────────────
-function computeLayout(topology) {
-    const g = new dagre.graphlib.Graph();
-    g.setGraph({ rankdir: 'TB', nodesep: 30, ranksep: 90, marginx: 60, marginy: 40 });
-    g.setDefaultEdgeLabel(() => ({}));
+// ── Layout Engine ────────────────────────────────
+// Simple graph for storing node positions and parent→child edges (replaces dagre)
+class LayoutGraph {
+    constructor() { this._nodes = {}; this._edges = []; this._adj = {}; }
+    setNode(id, data) { this._nodes[id] = data; if (!this._adj[id]) this._adj[id] = []; }
+    node(id) { return this._nodes[id]; }
+    nodes() { return Object.keys(this._nodes); }
+    setEdge(from, to) { this._edges.push({ from, to }); if (!this._adj[from]) this._adj[from] = []; this._adj[from].push(to); }
+    successors(id) { return this._adj[id] || []; }
+}
 
-    // Internet node
-    g.setNode('internet', { width: 200, height: 110, type: 'internet' });
+let bandGroupPositions = {};
 
-    // Gateway node (card + badge = ~180px effective height)
-    g.setNode('gateway', { width: 230, height: 180, type: 'device' });
-    g.setEdge('internet', 'gateway');
+// Band ordering constant
+const BAND_ORDER = ['Ethernet', '5 GHz', '2.4 GHz', '6 GHz'];
+function sortBands(bands) {
+    return [...bands].sort((a, b) =>
+        (BAND_ORDER.indexOf(a) === -1 ? 99 : BAND_ORDER.indexOf(a)) -
+        (BAND_ORDER.indexOf(b) === -1 ? 99 : BAND_ORDER.indexOf(b))
+    );
+}
 
-    // Recursively add children for each device
-    function addDeviceChildren(deviceId) {
-        const clients = topology.clients.filter(c => c.parentId === deviceId);
-        const childSats = topology.satellites.filter(s => s.parentId === deviceId);
-
-        // Group clients by band
-        const bandGroups = {};
-        clients.forEach(c => {
-            const band = c.connection === 'ethernet' ? 'Ethernet' : (c.band || '5 GHz');
-            if (!bandGroups[band]) bandGroups[band] = [];
-            bandGroups[band].push(c);
-        });
-
-        const bandOrder = ['Ethernet', '5 GHz', '2.4 GHz', '6 GHz'];
-        const sortedBands = Object.keys(bandGroups).sort((a, b) =>
-            (bandOrder.indexOf(a) === -1 ? 99 : bandOrder.indexOf(a)) -
-            (bandOrder.indexOf(b) === -1 ? 99 : bandOrder.indexOf(b))
-        );
-
-        sortedBands.forEach(band => {
-            const groupId = `${deviceId}::${band}`;
-            const count = bandGroups[band].length;
-            const pillW = 140;
-            const pillH = count * 28;
-            g.setNode(groupId, {
-                width: pillW,
-                height: Math.max(pillH, 30),
-                type: 'band-group',
-                band: band,
-                parentDevice: deviceId,
-                clients: bandGroups[band]
-            });
-            g.setEdge(deviceId, groupId);
-        });
-
-        childSats.forEach(sat => {
-            g.setNode(sat.id, { width: 230, height: 180, type: 'device' });
-            g.setEdge(deviceId, sat.id);
-            addDeviceChildren(sat.id);
-        });
-    }
-
-    addDeviceChildren('gateway');
-    dagre.layout(g);
-    return g;
+// Group clients by band for a device
+function getClientBandGroups(topology, deviceId) {
+    const clients = topology.clients.filter(c => c.parentId === deviceId);
+    const groups = {};
+    clients.forEach(c => {
+        const band = c.connection === 'ethernet' ? 'Ethernet' : (c.band || '5 GHz');
+        if (!groups[band]) groups[band] = [];
+        groups[band].push(c);
+    });
+    return groups;
 }
 
 function renderTopologyGraph() {
     const container = document.getElementById('topologyNodes');
     container.innerHTML = '';
+    bandGroupPositions = {};
 
-    const g = computeLayout(TOPOLOGY);
-    layoutGraph = g;
+    // Layout spacing constants (design intent — not element measurements)
+    const BAND_GAP = 20;      // horizontal gap between band-group columns
+    const CLIENT_GAP = 50;    // vertical gap between device card bottom and client pills top
+    const SUBTREE_GAP = 30;   // horizontal gap between sibling subtrees
+    const RANK_GAP = 60;      // vertical gap between a device's client pills and its sub-satellite
+    const INET_GAP = 38;      // vertical gap between internet wrapper bottom and gateway top (produces ~50px card-to-card, matching bus spacing)
+    const MARGIN = 40;
 
-    // Set container to match graph dimensions
-    const graphInfo = g.graph();
-    container.style.width = graphInfo.width + 'px';
-    container.style.height = graphInfo.height + 'px';
-
-    g.nodes().forEach(nodeId => {
-        const nodeData = g.node(nodeId);
-        let el;
-
-        if (nodeId === 'internet') {
-            el = createDeviceNode(TOPOLOGY.internet);
-        } else if (nodeId === 'gateway') {
-            el = createDeviceNode(TOPOLOGY.gateway);
-        } else if (nodeData.type === 'band-group') {
-            el = createBandGroupEl(nodeId, nodeData);
-        } else {
-            // Satellite
-            const sat = TOPOLOGY.satellites.find(s => s.id === nodeId);
-            if (sat) el = createDeviceNode(sat);
-        }
-
-        if (el) {
-            el.style.position = 'absolute';
-            el.style.left = (nodeData.x - nodeData.width / 2) + 'px';
-            el.style.top = (nodeData.y - nodeData.height / 2) + 'px';
-            container.appendChild(el);
-        }
+    // ── Step 1: Create all DOM elements hidden in container for measurement ──
+    // Elements are placed directly in the container (not a detached box) so they
+    // inherit proper CSS context for accurate measurement.
+    const deviceEls = {};
+    const allDeviceIds = ['internet', 'gateway', ...TOPOLOGY.satellites.map(s => s.id)];
+    allDeviceIds.forEach(id => {
+        const deviceData = id === 'internet' ? TOPOLOGY.internet :
+            id === 'gateway' ? TOPOLOGY.gateway :
+            TOPOLOGY.satellites.find(s => s.id === id);
+        if (!deviceData) return;
+        const el = createDeviceNode(deviceData);
+        el.style.position = 'absolute';
+        el.style.visibility = 'hidden';
+        container.appendChild(el);
+        deviceEls[id] = el;
     });
+
+    // Create band-group elements
+    const bandGroupEls = {};
+    const bandGroupData = {}; // { groupId: { band, clients, parentDevice } }
+    allDeviceIds.forEach(deviceId => {
+        if (deviceId === 'internet') return;
+        const groups = getClientBandGroups(TOPOLOGY, deviceId);
+        const bands = sortBands(Object.keys(groups));
+        bands.forEach(band => {
+            const groupId = `${deviceId}::${band}`;
+            const data = { band, clients: groups[band], parentDevice: deviceId };
+            bandGroupData[groupId] = data;
+            if (!simplifiedView) {
+                const el = createBandGroupEl(groupId, data);
+                el.style.position = 'absolute';
+                el.style.visibility = 'hidden';
+                container.appendChild(el);
+                bandGroupEls[groupId] = el;
+            }
+        });
+    });
+
+    // ── Step 2: Measure actual rendered sizes ──
+    // Measure both wrapper and card-within-wrapper to get internal offsets
+    const measured = {}; // { id: { w, h, cardTop, cardBottom, cardCxOffset } }
+    Object.entries(deviceEls).forEach(([id, el]) => {
+        const card = el.querySelector('.device-card') || el;
+        const elRect = el.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        measured[id] = {
+            w: elRect.width,    // wrapper width (for positioning)
+            h: elRect.height,   // wrapper height (for spacing)
+            cardOffsetTop: cardRect.top - elRect.top,       // card top within wrapper
+            cardH: cardRect.height,                          // card height
+            cardW: cardRect.width,                           // card width
+            cardCxOffset: (cardRect.left + cardRect.width / 2) - (elRect.left + elRect.width / 2) // card center offset from wrapper center
+        };
+    });
+    const measuredGroups = {}; // { groupId: { w, h } }
+    Object.entries(bandGroupEls).forEach(([groupId, el]) => {
+        measuredGroups[groupId] = { w: el.offsetWidth, h: el.offsetHeight };
+    });
+
+    // ── Step 3: Compute layout using real measurements ──
+
+    // Per-device info: band groups, total client row width/height
+    const deviceInfo = {};
+    allDeviceIds.forEach(deviceId => {
+        if (deviceId === 'internet') return;
+        const groups = getClientBandGroups(TOPOLOGY, deviceId);
+        const bands = sortBands(Object.keys(groups));
+        let clientsWidth = 0;
+        let tallestGroup = 0;
+        bands.forEach((band, i) => {
+            const gid = `${deviceId}::${band}`;
+            const gm = measuredGroups[gid] || { w: 140, h: 28 };
+            clientsWidth += gm.w + (i > 0 ? BAND_GAP : 0);
+            if (gm.h > tallestGroup) tallestGroup = gm.h;
+        });
+        const m = measured[deviceId];
+        const wrapperH = m ? m.h : 140;
+        const cardH = m ? (m.cardOffsetTop + m.cardH) : 140; // from wrapper top to card bottom
+        const clientsHeight = bands.length > 0 ? CLIENT_GAP + tallestGroup : 0;
+        deviceInfo[deviceId] = {
+            bands,
+            groups,
+            cardW: m ? m.w : 230,
+            cardH,
+            wrapperH,
+            clientsWidth,
+            clientsHeight,
+            fullHeight: cardH + clientsHeight,
+            ownWidth: Math.max(measured[deviceId] ? measured[deviceId].w : 230, clientsWidth)
+        };
+    });
+
+    // Recursive subtree width
+    // Clients and sub-satellite subtrees are placed side-by-side (not overlapping)
+    function subtreeWidth(deviceId) {
+        const info = deviceInfo[deviceId];
+        if (!info) return 230;
+        const childSats = TOPOLOGY.satellites.filter(s => s.parentId === deviceId);
+        if (childSats.length === 0) return info.ownWidth;
+        const childSatW = childSats.reduce((sum, s) => sum + subtreeWidth(s.id), 0)
+            + (childSats.length - 1) * SUBTREE_GAP;
+        // Child row: clients on left, sub-satellite subtrees on right
+        const rowW = info.clientsWidth
+            + (info.bands.length > 0 && childSats.length > 0 ? SUBTREE_GAP : 0)
+            + childSatW;
+        return Math.max(info.cardW, rowW);
+    }
+
+    // Gateway row width: band-group columns + satellite subtrees in one row
+    const gwInfo = deviceInfo['gateway'];
+    const rootSats = TOPOLOGY.satellites.filter(s => s.parentId === 'gateway');
+    const totalSatW = rootSats.reduce((sum, s) => sum + subtreeWidth(s.id), 0)
+        + (rootSats.length > 0 ? rootSats.length * SUBTREE_GAP : 0);
+    const totalRowW = (gwInfo ? gwInfo.clientsWidth : 0)
+        + (gwInfo && gwInfo.bands.length > 0 && rootSats.length > 0 ? SUBTREE_GAP : 0)
+        + totalSatW;
+    const canvasW = Math.max(totalRowW, 230) + MARGIN * 2;
+
+    // Positions: { id: { left, top, w, h, cardTop, cardBottom, cardCx } }
+    // left/top/w/h = wrapper element position (for DOM placement)
+    // cardTop/cardBottom/cardCx = actual card edges (for connection drawing)
+    const pos = {};
+
+    function makePos(id, left, top) {
+        const m = measured[id] || { w: 230, h: 140, cardOffsetTop: 0, cardH: 140, cardW: 230, cardCxOffset: 0 };
+        const cx = left + m.w / 2;
+        return {
+            left, top, w: m.w, h: m.h, cx,
+            cardTop: top + m.cardOffsetTop,
+            cardBottom: top + m.cardOffsetTop + m.cardH,
+            cardCx: cx + m.cardCxOffset
+        };
+    }
+
+    // Internet
+    const inetM = measured['internet'] || { w: 250, h: 125 };
+    const inetTop = MARGIN;
+    pos['internet'] = makePos('internet', canvasW / 2 - inetM.w / 2, inetTop);
+
+    // Gateway
+    const gwM = measured['gateway'] || { w: 230, h: 142 };
+    const gwTop = pos['internet'].top + pos['internet'].h + INET_GAP;
+    pos['gateway'] = makePos('gateway', canvasW / 2 - gwM.w / 2, gwTop);
+
+    // Children row: band-groups + satellite subtrees
+    const childrenY = pos['gateway'].cardBottom + CLIENT_GAP;
+    let cursorX = canvasW / 2 - totalRowW / 2;
+
+    // Place gateway band-group columns
+    if (gwInfo) {
+        gwInfo.bands.forEach(band => {
+            const gid = `gateway::${band}`;
+            const gm = measuredGroups[gid] || { w: 140, h: 100 };
+            bandGroupPositions[gid] = {
+                x: cursorX + gm.w / 2, y: childrenY,
+                width: gm.w, height: gm.h,
+                band, parentDevice: 'gateway'
+            };
+            cursorX += gm.w + BAND_GAP;
+        });
+        if (gwInfo.bands.length > 0) cursorX += SUBTREE_GAP - BAND_GAP;
+    }
+
+    // Place satellite subtrees recursively
+    // Clients go on the left of the child row, sub-satellite subtrees on the right
+    function placeSatelliteSubtree(sat, left, top) {
+        const info = deviceInfo[sat.id];
+        if (!info) return;
+        const stW = subtreeWidth(sat.id);
+        const cx = left + stW / 2;
+        const m = measured[sat.id] || { w: 230, h: 124 };
+
+        pos[sat.id] = makePos(sat.id, cx - m.w / 2, top);
+
+        const childSats = TOPOLOGY.satellites.filter(s => s.parentId === sat.id);
+        const hasBoth = info.bands.length > 0 && childSats.length > 0;
+
+        // Compute child row width (clients + gap + sub-sat subtrees)
+        const childSatW = childSats.reduce((sum, cs) => sum + subtreeWidth(cs.id), 0)
+            + (childSats.length > 0 ? (childSats.length - 1) * SUBTREE_GAP : 0);
+        const rowW = info.clientsWidth
+            + (hasBoth ? SUBTREE_GAP : 0)
+            + childSatW;
+
+        // Child row starts centered under parent
+        const childrenY = pos[sat.id].cardBottom + CLIENT_GAP;
+        let cursor = cx - rowW / 2;
+
+        // Place client band-groups (left side of child row)
+        if (info.bands.length > 0) {
+            info.bands.forEach(band => {
+                const gid = `${sat.id}::${band}`;
+                const gm = measuredGroups[gid] || { w: 140, h: 100 };
+                bandGroupPositions[gid] = {
+                    x: cursor + gm.w / 2, y: childrenY,
+                    width: gm.w, height: gm.h,
+                    band, parentDevice: sat.id
+                };
+                cursor += gm.w + BAND_GAP;
+            });
+            if (hasBoth) cursor += SUBTREE_GAP - BAND_GAP;
+        }
+
+        // Place sub-satellite subtrees (right side of child row)
+        if (childSats.length > 0) {
+            const subTop = top + info.fullHeight + RANK_GAP;
+            childSats.forEach(cs => {
+                placeSatelliteSubtree(cs, cursor, subTop);
+                cursor += subtreeWidth(cs.id) + SUBTREE_GAP;
+            });
+        }
+    }
+
+    rootSats.forEach(sat => {
+        placeSatelliteSubtree(sat, cursorX, childrenY);
+        cursorX += subtreeWidth(sat.id) + SUBTREE_GAP;
+    });
+
+    // ── Step 4: Center parents over children (bottom-up, computed) ──
+    function shiftPos(p, dx) {
+        p.left += dx; p.cx += dx; p.cardCx += dx;
+    }
+
+    function centerOverChildren(deviceId) {
+        const childSats = TOPOLOGY.satellites.filter(s => s.parentId === deviceId);
+        childSats.forEach(sat => centerOverChildren(sat.id));
+
+        const p = pos[deviceId];
+        if (!p) return;
+
+        const childCenters = [];
+        Object.entries(bandGroupPositions).forEach(([gid, gp]) => {
+            if (gp.parentDevice === deviceId) childCenters.push(gp.x);
+        });
+        childSats.forEach(sat => {
+            if (pos[sat.id]) childCenters.push(pos[sat.id].cardCx);
+        });
+
+        if (childCenters.length === 0) return;
+        const targetCx = (Math.min(...childCenters) + Math.max(...childCenters)) / 2;
+        const shift = targetCx - p.cardCx;
+        if (Math.abs(shift) > 1) shiftPos(p, shift);
+    }
+    centerOverChildren('gateway');
+
+    // Center Internet over Gateway (align card centers)
+    if (pos['internet'] && pos['gateway']) {
+        const shift = pos['gateway'].cardCx - pos['internet'].cardCx;
+        if (Math.abs(shift) > 1) shiftPos(pos['internet'], shift);
+    }
+
+    // ── Step 5: Position elements from computed layout ──
+
+    // Compute canvas size
+    let maxRight = 0, maxBottom = 0;
+    Object.values(pos).forEach(p => {
+        const r = p.left + p.w;
+        if (r > maxRight) maxRight = r;
+        if (p.cardBottom > maxBottom) maxBottom = p.cardBottom;
+    });
+    Object.values(bandGroupPositions).forEach(p => {
+        const r = p.x + p.width / 2;
+        const b = p.y + p.height;
+        if (r > maxRight) maxRight = r;
+        if (b > maxBottom) maxBottom = b;
+    });
+    container.style.width = (maxRight + MARGIN) + 'px';
+    container.style.height = (maxBottom + MARGIN) + 'px';
+
+    // Place device cards at final positions
+    Object.entries(deviceEls).forEach(([id, el]) => {
+        const p = pos[id];
+        if (!p) return;
+        el.style.left = p.left + 'px';
+        el.style.top = p.top + 'px';
+        el.style.visibility = 'visible';
+        container.appendChild(el);
+    });
+
+    // Place band-group elements
+    if (!simplifiedView) {
+        Object.entries(bandGroupEls).forEach(([groupId, el]) => {
+            const p = bandGroupPositions[groupId];
+            if (!p) return;
+            el.style.left = (p.x - p.width / 2) + 'px';
+            el.style.top = p.y + 'px';
+            el.style.visibility = 'visible';
+            container.appendChild(el);
+        });
+    }
+
+    // ── Step 6: Build layout graph for layoutConnections() ──
+    const g = new LayoutGraph();
+    // Store positions using the actual final positions
+    Object.entries(pos).forEach(([id, p]) => {
+        g.setNode(id, { x: p.cardCx, top: p.cardTop, bottom: p.cardBottom, wrapperBottom: p.top + p.h, width: p.w, height: p.h, type: id === 'internet' ? 'internet' : 'device' });
+    });
+    g.setEdge('internet', 'gateway');
+    function addEdges(parentId) {
+        TOPOLOGY.satellites.filter(s => s.parentId === parentId).forEach(sat => {
+            g.setEdge(parentId, sat.id);
+            addEdges(sat.id);
+        });
+    }
+    addEdges('gateway');
+    layoutGraph = g;
 }
 
 function createBandGroupEl(groupId, nodeData) {
@@ -478,7 +736,6 @@ function createBandGroupEl(groupId, nodeData) {
     const pillsContainer = document.createElement('div');
     pillsContainer.className = 'band-group-pills';
 
-    // Sort: active first, then by traffic descending
     const sorted = [...clients].sort((a, b) => {
         if (a.idle !== b.idle) return a.idle ? 1 : -1;
         const aTotal = (a.activity?.down || 0) + (a.activity?.up || 0);
@@ -575,7 +832,7 @@ function detectOverlaps() {
     // 1. Horizontal overflow
     if (container.scrollWidth > container.clientWidth + 2) return true;
 
-    // 2. Check device cards for overlap (dagre should prevent this, but verify)
+    // 2. Check device cards for overlap
     const cards = document.querySelectorAll('.device-card');
     const cardRects = Array.from(cards).map(c => c.getBoundingClientRect()).filter(r => r.width > 0);
     for (let i = 0; i < cardRects.length; i++) {
@@ -590,127 +847,6 @@ function detectOverlaps() {
     return false;
 }
 
-// Build a tree structure: returns array of root-level children for a given parentId
-function getSatelliteChildren(parentId) {
-    return TOPOLOGY.satellites.filter(s => s.parentId === parentId);
-}
-
-// Render the bus area below a node: client pill branches + child satellite branches (inline)
-function renderBusChildren(parentId) {
-    const parentClients = TOPOLOGY.clients.filter(c => c.parentId === parentId);
-    const childSats = TOPOLOGY.satellites.filter(s => s.parentId === parentId);
-
-    if (parentClients.length === 0 && childSats.length === 0) return null;
-
-    // Group clients by band
-    const bandGroups = {};
-    parentClients.forEach(client => {
-        const bandKey = client.connection === 'ethernet' ? 'Ethernet' : (client.band || '5 GHz');
-        if (!bandGroups[bandKey]) bandGroups[bandKey] = [];
-        bandGroups[bandKey].push(client);
-    });
-
-    const bandOrder = ['Ethernet', '5 GHz', '2.4 GHz', '6 GHz'];
-    const sortedBands = Object.keys(bandGroups).sort((a, b) =>
-        (bandOrder.indexOf(a) === -1 ? 99 : bandOrder.indexOf(a)) -
-        (bandOrder.indexOf(b) === -1 ? 99 : bandOrder.indexOf(b))
-    );
-
-    const clientsArea = document.createElement('div');
-    clientsArea.className = 'subtree-clients';
-
-    // Client pill branches (grouped by band)
-    sortedBands.forEach(band => {
-        const branch = document.createElement('div');
-        branch.className = 'band-branch';
-        branch.dataset.band = band;
-        branch.dataset.bandLabel = band === 'Ethernet' ? 'LAN' : band;
-
-        const pills = document.createElement('div');
-        pills.className = 'branch-clients';
-        bandGroups[band].sort((a, b) => {
-            if (a.idle !== b.idle) return a.idle ? 1 : -1;
-            const aTotal = (a.activity?.down || 0) + (a.activity?.up || 0);
-            const bTotal = (b.activity?.down || 0) + (b.activity?.up || 0);
-            return bTotal - aTotal;
-        });
-        bandGroups[band].forEach(client => {
-            pills.appendChild(createClientPill(client));
-        });
-        branch.appendChild(pills);
-        clientsArea.appendChild(branch);
-    });
-
-    // Child satellite branches — inline on the same bus, each as a "sat-branch"
-    // containing the satellite card + its own recursive bus children below
-    childSats.forEach(sat => {
-        const satBranch = document.createElement('div');
-        satBranch.className = 'band-branch sat-branch';
-
-        // Determine backhaul band label
-        const backhaulBand = sat.backhaulBand || '5 GHz';
-        let bandLabel;
-        if (sat.connectionType === 'ethernet') bandLabel = '10GbE';
-        else if (backhaulBand.includes('6')) bandLabel = '6GHZ-MESH';
-        else if (backhaulBand.includes('2.4')) bandLabel = '2.4GHZ-MESH';
-        else bandLabel = '5GHZ-MESH';
-        satBranch.dataset.bandLabel = bandLabel;
-        satBranch.dataset.band = bandLabel;
-
-        // Satellite card + its own children (recursive)
-        const satSubtree = document.createElement('div');
-        satSubtree.className = 'subtree';
-        satSubtree.dataset.parent = sat.id;
-        satSubtree.appendChild(createDeviceNode(sat));
-
-        const childBus = renderBusChildren(sat.id);
-        if (childBus) satSubtree.appendChild(childBus);
-
-        satBranch.appendChild(satSubtree);
-        clientsArea.appendChild(satBranch);
-    });
-
-    return clientsArea;
-}
-
-function renderTopology() {
-    const container = document.getElementById('topologyNodes');
-    container.innerHTML = '';
-
-    // Internet (centered)
-    const tierInternet = createTier('internet');
-    tierInternet.appendChild(createDeviceNode(TOPOLOGY.internet));
-    container.appendChild(tierInternet);
-
-    // Gateway (centered)
-    const tierGateway = createTier('gateway');
-    tierGateway.appendChild(createDeviceNode(TOPOLOGY.gateway));
-    container.appendChild(tierGateway);
-
-    // Single bus row: gateway direct clients + root satellites (+ their recursive children inline)
-    const tierSubtrees = document.createElement('div');
-    tierSubtrees.className = 'topology-tier tier-subtrees';
-
-    // Gateway gets a subtree with all its bus children (clients + root satellites inline)
-    const gwBus = renderBusChildren('gateway');
-    if (gwBus) {
-        // Wrap the gateway bus in a subtree container
-        const gwSubtree = document.createElement('div');
-        gwSubtree.className = 'subtree';
-        gwSubtree.dataset.parent = 'gateway';
-        gwSubtree.appendChild(gwBus);
-        tierSubtrees.appendChild(gwSubtree);
-    }
-
-    container.appendChild(tierSubtrees);
-}
-
-function createTier(type) {
-    const tier = document.createElement('div');
-    tier.className = `topology-tier tier-${type}`;
-    tier.dataset.tier = type;
-    return tier;
-}
 
 function createDeviceNode(device) {
     const node = document.createElement('div');
@@ -1189,51 +1325,51 @@ function layoutConnections() {
     const gwNode = graph.node('gateway');
     if (inetNode && gwNode) {
         const color = CONN_COLORS.ethernet;
-        const inetBottom = inetNode.y + inetNode.height / 2 + 12; // cloud extends below
-        const gwTop = gwNode.y - gwNode.height / 2;
-        line(inetNode.x, inetBottom, gwNode.x, gwTop, color);
-        const midY = (inetBottom + gwTop) / 2;
-        bandTag(inetNode.x, midY, TOPOLOGY.gateway.wanType || '10GbE WAN', color);
+        line(inetNode.x, inetNode.bottom, gwNode.x, gwNode.top, color);
+        // Center tag visually between Internet wrapper bottom and Gateway card top
+        // Nudge up 2px to compensate for text baseline offset inside tag
+        const tagY = (inetNode.wrapperBottom + gwNode.top) / 2 - 2;
+        bandTag(inetNode.x, tagY, TOPOLOGY.gateway.wanType || '10GbE WAN', color);
     }
 
-    // === 2. Recursive bus drawing using dagre graph ===
+    // === 2. Recursive device bus drawing ===
     function drawDeviceBus(deviceId) {
         const deviceNode = graph.node(deviceId);
         if (!deviceNode) return;
 
-        const successors = graph.successors(deviceId);
-        if (!successors || successors.length === 0) return;
-
         const parentCx = deviceNode.x;
-        const parentBottom = deviceNode.y + deviceNode.height / 2;
+        const cardBottom = deviceNode.bottom;
 
-        const dests = [];
+        // Satellite children
+        const satDests = [];
+        const successors = graph.successors(deviceId) || [];
         successors.forEach(childId => {
             const childNode = graph.node(childId);
-            if (!childNode) return;
-
-            const childTop = childNode.y - childNode.height / 2;
-
-            if (childNode.type === 'band-group') {
-                if (simplifiedView) return; // skip client branches in simplified
-                const bandText = childNode.band === 'Ethernet' ? 'LAN' : childNode.band;
-                const connType = childNode.band === 'Ethernet' ? 'ethernet' :
-                    childNode.band.includes('2.4') ? 'wifi-24' :
-                    childNode.band.includes('6') ? 'wifi-6' : 'wifi-5';
-                dests.push({ x: childNode.x, y: childTop, connType, label: bandText });
-            } else {
-                // Satellite
-                const sat = TOPOLOGY.satellites.find(s => s.id === childId);
-                if (sat) {
-                    const ci = satConnInfo(sat);
-                    dests.push({ x: childNode.x, y: childTop, connType: ci.connType, label: ci.label, isSat: true });
-                }
+            if (!childNode || childNode.type !== 'device') return;
+            const sat = TOPOLOGY.satellites.find(s => s.id === childId);
+            if (sat) {
+                const ci = satConnInfo(sat);
+                satDests.push({ x: childNode.x, y: childNode.top, connType: ci.connType, label: ci.label });
             }
         });
 
-        if (dests.length > 0) {
-            drawParentBus(parentCx, parentBottom, dests);
+        // Client band-group children
+        const clientDests = [];
+        if (!simplifiedView) {
+            Object.keys(bandGroupPositions).forEach(groupId => {
+                const pos = bandGroupPositions[groupId];
+                if (pos.parentDevice !== deviceId) return;
+                const bandText = pos.band === 'Ethernet' ? 'LAN' : pos.band;
+                const connType = pos.band === 'Ethernet' ? 'ethernet' :
+                    pos.band.includes('2.4') ? 'wifi-24' :
+                    pos.band.includes('6') ? 'wifi-6' : 'wifi-5';
+                clientDests.push({ x: pos.x, y: pos.y, connType, label: bandText });
+            });
         }
+
+        // All children share one bus
+        const allDests = [...satDests, ...clientDests];
+        if (allDests.length > 0) drawParentBus(parentCx, cardBottom, allDests);
 
         // Recurse into satellite children
         successors.forEach(childId => {
@@ -1247,6 +1383,96 @@ function layoutConnections() {
     drawDeviceBus('gateway');
 
     svg.appendChild(master);
+
+    // Verify connection integrity
+    verifyConnections(svg, nodesEl);
+}
+
+// Checks that every SVG infra-line endpoint connects to an element edge or another line.
+// Logs warnings to console for any disconnected endpoints (gap > tolerance).
+function verifyConnections(svg, nodesEl) {
+    const container = nodesEl.closest('.topology-container');
+    if (!container) return;
+    const lines = Array.from(svg.querySelectorAll('.infra-line'));
+    if (lines.length === 0) return;
+
+    const T = 5; // tolerance in px
+
+    function getR(el) {
+        const r = el.getBoundingClientRect();
+        const cr = container.getBoundingClientRect();
+        return {
+            l: r.left - cr.left + container.scrollLeft,
+            t: r.top - cr.top + container.scrollTop,
+            r: r.right - cr.left + container.scrollLeft,
+            b: r.bottom - cr.top + container.scrollTop
+        };
+    }
+
+    // Collect element edges (device cards + band groups)
+    const edges = [];
+    nodesEl.querySelectorAll('.device-node').forEach(n => {
+        const card = n.querySelector('.device-card');
+        if (!card) return;
+        const r = getR(card);
+        edges.push({ id: n.dataset.id, ...r });
+    });
+    nodesEl.querySelectorAll('.band-group').forEach(bg => {
+        const r = getR(bg);
+        edges.push({ id: bg.dataset.groupId, ...r });
+    });
+
+    function matchesEdge(x, y) {
+        for (const e of edges) {
+            if (Math.abs(y - e.t) < T && x >= e.l - T && x <= e.r + T) return true;
+            if (Math.abs(y - e.b) < T && x >= e.l - T && x <= e.r + T) return true;
+        }
+        return false;
+    }
+
+    function matchesLine(x, y, skipIdx) {
+        for (let j = 0; j < lines.length; j++) {
+            if (j === skipIdx) continue;
+            const ox1 = lines[j].x1.baseVal.value, oy1 = lines[j].y1.baseVal.value;
+            const ox2 = lines[j].x2.baseVal.value, oy2 = lines[j].y2.baseVal.value;
+            if (oy1 === oy2) { // horizontal
+                const mn = Math.min(ox1, ox2), mx = Math.max(ox1, ox2);
+                if (Math.abs(y - oy1) < 2 && x >= mn - 1 && x <= mx + 1) return true;
+            }
+            if (ox1 === ox2) { // vertical
+                const mn = Math.min(oy1, oy2), mx = Math.max(oy1, oy2);
+                if (Math.abs(x - ox1) < 2 && y >= mn - 1 && y <= mx + 1) return true;
+            }
+        }
+        return false;
+    }
+
+    let issues = 0;
+    lines.forEach((line, i) => {
+        const x1 = line.x1.baseVal.value, y1 = line.y1.baseVal.value;
+        const x2 = line.x2.baseVal.value, y2 = line.y2.baseVal.value;
+        if (!matchesEdge(x1, y1) && !matchesLine(x1, y1, i)) {
+            console.warn(`[ConnCheck] Line ${i} endpoint1 (${x1},${y1}) disconnected`);
+            issues++;
+        }
+        if (!matchesEdge(x2, y2) && !matchesLine(x2, y2, i)) {
+            console.warn(`[ConnCheck] Line ${i} endpoint2 (${x2},${y2}) disconnected`);
+            issues++;
+        }
+    });
+    // Check for diagonal lines (all lines must be strictly horizontal or vertical)
+    lines.forEach((line, i) => {
+        const x1 = line.x1.baseVal.value, y1 = line.y1.baseVal.value;
+        const x2 = line.x2.baseVal.value, y2 = line.y2.baseVal.value;
+        if (Math.abs(x1 - x2) > 1 && Math.abs(y1 - y2) > 1) {
+            console.warn(`[ConnCheck] Line ${i} is DIAGONAL: (${x1},${y1})→(${x2},${y2})`);
+            issues++;
+        }
+    });
+
+    if (issues > 0) {
+        console.warn(`[ConnCheck] ${issues} issue(s) found in ${lines.length} lines`);
+    }
 }
 
 // ── Animations ─────────────────────────────────────
