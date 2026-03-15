@@ -1,3 +1,4 @@
 *.mov
 *.pdf
 *.png
+!screenshots/*.png
