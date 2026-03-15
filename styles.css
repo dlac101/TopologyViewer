@@ -455,6 +455,7 @@ body {
     border-bottom: 1px solid rgba(167, 139, 250, 0.2);
     font-family: var(--font-mono);
     font-weight: 500;
+    overflow: hidden;
 }
 
 .bh-line-top {
@@ -783,6 +784,10 @@ body {
     letter-spacing: 0.04em;
     opacity: 0.85;
     line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
 }
 
 .device-card.gateway .managed-badge .model-number {
@@ -829,6 +834,10 @@ body {
     margin-top: 2px;
     position: relative;
     z-index: 2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
 }
 
 .device-meta {
@@ -1266,7 +1275,6 @@ body {
     align-items: center;
     gap: 4px;
 }
-
 @keyframes activityPulseMedium {
     0%, 100% { box-shadow: var(--shadow-card), 0 0 8px rgba(34, 211, 238, 0.15); }
     50% { box-shadow: var(--shadow-card), 0 0 14px rgba(34, 211, 238, 0.3); }
