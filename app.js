@@ -4,19 +4,41 @@
 
 // ── Mock Data ──────────────────────────────────────
 const TOPOLOGY = {
-    internet: {
-        id: 'internet',
-        type: 'internet',
-        name: 'Internet',
-        ip: 'WAN',
-        wanIp: '72.168.14.201',
-        isp: 'Frontier FiOS',
-        downloadSpeed: 940,
-        uploadSpeed: 880,
-        latency: 4,
-        status: 'online',
-        uptime: '34d 7h 22m',
-    },
+    wans: [
+        {
+            id: 'wan1',
+            type: 'internet',
+            name: 'Internet',
+            ip: 'WAN',
+            wanIp: '72.168.14.201',
+            isp: 'Frontier FiOS',
+            downloadSpeed: 940,
+            uploadSpeed: 880,
+            latency: 4,
+            status: 'offline',
+            uptime: '34d 7h 22m',
+            wanType: '10GbE WAN',
+            wanMode: 'failover',
+            role: 'primary',
+        },
+        {
+            id: 'wan2',
+            type: 'internet',
+            name: 'Internet',
+            ip: 'WAN',
+            wanIp: '100.24.67.88',
+            isp: 'AT&T Wireless',
+            downloadSpeed: 75,
+            uploadSpeed: 25,
+            latency: 38,
+            status: 'online',
+            uptime: '2h 14m',
+            wanType: '4G LTE',
+            wanMode: 'failover',
+            role: 'secondary',
+            interface: 'USB',
+        },
+    ],
     gateway: {
         id: 'gateway',
         type: 'gateway',
@@ -26,7 +48,6 @@ const TOPOLOGY = {
         mac: 'A8:13:74:8D:87:33',
         ip: '192.168.0.1',
         firmware: 'SmartOS 4.2.1',
-        wanType: '10GbE WAN',
         cpu: 12,
         memory: 38,
         temperature: 52,
@@ -163,11 +184,11 @@ const TOPOLOGY = {
     clients: [
         // Gateway direct clients
         { id: 'c1', name: 'Desktop-PC', mac: '4C:CC:6A:12:34:56', ip: '192.168.0.100', parentId: 'gateway', band: '5 GHz', rssi: -34, rxRate: 2882, txRate: 2882, activity: { down: 42.1, up: 18.7 }, type: 'desktop', status: 'online', connectedSince: '2d 14h', wifiVersion: '7' },
-        { id: 'c2', name: 'NAS-Synology', mac: '00:11:32:AB:CD:EF', ip: '192.168.0.10', parentId: 'gateway', connection: 'ethernet', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'server', status: 'online', connectedSince: '34d 7h', idle: true },
-        { id: 'c18', name: 'Pi-Hole DNS', mac: 'B8:27:EB:11:22:33', ip: '192.168.0.7', parentId: 'gateway', connection: 'ethernet', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'server', status: 'online', connectedSince: '34d 7h', idle: true },
-        { id: 'c19', name: 'UniFi Switch', mac: 'F0:9F:C2:44:55:66', ip: '192.168.0.8', parentId: 'gateway', connection: 'ethernet', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
+        { id: 'c2', name: 'NAS-Synology', mac: '00:11:32:AB:CD:EF', ip: '192.168.0.10', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN1', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'server', status: 'online', connectedSince: '34d 7h', idle: true },
+        { id: 'c18', name: 'Pi-Hole DNS', mac: 'B8:27:EB:11:22:33', ip: '192.168.0.7', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN1', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'server', status: 'online', connectedSince: '34d 7h', idle: true },
+        { id: 'c19', name: 'UniFi Switch', mac: 'F0:9F:C2:44:55:66', ip: '192.168.0.8', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN2', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
         { id: 'c20', name: 'Gaming-PC', mac: '70:85:C2:77:88:99', ip: '192.168.0.101', parentId: 'gateway', band: '6 GHz', rssi: -28, rxRate: 5765, txRate: 5765, activity: { down: 78.3, up: 24.1 }, type: 'desktop', status: 'online', connectedSince: '5h 33m', qoeBreakdown: { snr: 98, phyRate: 100, stability: 88 }, wifiVersion: '7' },
-        { id: 'c21', name: 'Hue Bridge', mac: '00:17:88:AA:BB:CC', ip: '192.168.0.9', parentId: 'gateway', connection: 'ethernet', rxRate: 100, txRate: 100, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
+        { id: 'c21', name: 'Hue Bridge', mac: '00:17:88:AA:BB:CC', ip: '192.168.0.9', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN2', rxRate: 100, txRate: 100, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
         { id: 'c71', name: 'Ring Doorbell', mac: '6C:AB:31:11:22:33', ip: '192.168.0.104', parentId: 'gateway', band: '2.4 GHz', rssi: -55, rxRate: 72, txRate: 72, activity: { down: 0.2, up: 0.8 }, type: 'iot', status: 'online', connectedSince: '34d 7h', qoeBreakdown: { snr: 58, phyRate: 40, stability: 72 } },
         { id: 'c74', name: 'MacBook M4', mac: '3C:22:FB:44:55:66', ip: '192.168.0.107', parentId: 'gateway', band: '6 GHz', rssi: -32, rxRate: 5765, txRate: 5765, activity: { down: 95.2, up: 42.7 }, type: 'laptop', status: 'online', connectedSince: '4h 15m', qoeBreakdown: { snr: 95, phyRate: 100, stability: 98 }, wifiVersion: '7' },
 
@@ -205,7 +226,7 @@ const TOPOLOGY = {
         // ── Additional clients (to reach 70+) ──────────────
         // Gateway extras
         { id: 'c51', name: 'Work Laptop', mac: '4C:CC:6A:22:33:44', ip: '192.168.0.160', parentId: 'gateway', band: '5 GHz', rssi: -34, rxRate: 2882, txRate: 2882, activity: { down: 28.4, up: 14.2 }, type: 'laptop', status: 'online', connectedSince: '3h 22m', wifiVersion: '7' },
-        { id: 'c52', name: 'Sonos Beam', mac: '48:A6:B8:33:44:55', ip: '192.168.0.161', parentId: 'gateway', connection: 'ethernet', rxRate: 1000, txRate: 1000, activity: { down: 4.2, up: 0.1 }, type: 'speaker', status: 'online', connectedSince: '12d 3h' },
+        { id: 'c52', name: 'Sonos Beam', mac: '48:A6:B8:33:44:55', ip: '192.168.0.161', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN1', rxRate: 1000, txRate: 1000, activity: { down: 4.2, up: 0.1 }, type: 'speaker', status: 'online', connectedSince: '12d 3h' },
         { id: 'c53', name: 'TP-Link Plug', mac: '98:DA:C4:11:22:33', ip: '192.168.0.162', parentId: 'gateway', band: '2.4 GHz', rssi: -58, rxRate: 54, txRate: 54, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '28d 4h', idle: true },
         { id: 'c54', name: 'Wyze Cam v3', mac: '2C:AA:8E:44:55:66', ip: '192.168.0.163', parentId: 'gateway', band: '2.4 GHz', rssi: -64, rxRate: 54, txRate: 54, activity: { down: 0.1, up: 2.4 }, type: 'camera', status: 'online', connectedSince: '34d 7h' },
         { id: 'c55', name: 'iMac Studio', mac: '3C:07:54:DD:EE:FF', ip: '192.168.0.164', parentId: 'gateway', band: '6 GHz', rssi: -28, rxRate: 5765, txRate: 5765, activity: { down: 112.5, up: 48.3 }, type: 'desktop', status: 'online', connectedSince: '6h 10m', wifiVersion: '7' },
@@ -420,10 +441,11 @@ function renderTopologyGraph() {
     // Elements are placed directly in the container (not a detached box) so they
     // inherit proper CSS context for accurate measurement.
     const deviceEls = {};
-    const allDeviceIds = ['internet', 'gateway', ...TOPOLOGY.satellites.map(s => s.id)];
+    const wanIds = TOPOLOGY.wans.map(w => w.id);
+    const allDeviceIds = [...wanIds, 'gateway', ...TOPOLOGY.satellites.map(s => s.id)];
     allDeviceIds.forEach(id => {
-        const deviceData = id === 'internet' ? TOPOLOGY.internet :
-            id === 'gateway' ? TOPOLOGY.gateway :
+        const deviceData = TOPOLOGY.wans.find(w => w.id === id) ||
+            (id === 'gateway' ? TOPOLOGY.gateway : null) ||
             TOPOLOGY.satellites.find(s => s.id === id);
         if (!deviceData) return;
         const el = createDeviceNode(deviceData);
@@ -437,7 +459,7 @@ function renderTopologyGraph() {
     const bandGroupEls = {};
     const bandGroupData = {}; // { groupId: { band, clients, parentDevice } }
     allDeviceIds.forEach(deviceId => {
-        if (deviceId === 'internet') return;
+        if (wanIds.includes(deviceId)) return;
         const groups = getClientBandGroups(TOPOLOGY, deviceId);
         const bands = sortBands(Object.keys(groups));
         bands.forEach(band => {
@@ -480,7 +502,7 @@ function renderTopologyGraph() {
     // Per-device info: band groups, total client row width/height
     const deviceInfo = {};
     allDeviceIds.forEach(deviceId => {
-        if (deviceId === 'internet') return;
+        if (wanIds.includes(deviceId)) return;
         const groups = getClientBandGroups(TOPOLOGY, deviceId);
         const bands = sortBands(Object.keys(groups));
         let clientsWidth = 0;
@@ -550,15 +572,25 @@ function renderTopologyGraph() {
         };
     }
 
-    // Internet
-    const inetM = measured['internet'] || { w: 250, h: 125 };
+    // Primary WAN (wan1) — centered above gateway
+    const wan1 = TOPOLOGY.wans[0];
+    const wan1M = measured[wan1.id] || { w: 250, h: 125 };
     const inetTop = MARGIN;
-    pos['internet'] = makePos('internet', canvasW / 2 - inetM.w / 2, inetTop);
+    pos[wan1.id] = makePos(wan1.id, canvasW / 2 - wan1M.w / 2, inetTop);
 
     // Gateway
     const gwM = measured['gateway'] || { w: 230, h: 142 };
-    const gwTop = pos['internet'].top + pos['internet'].h + INET_GAP;
+    const gwTop = pos[wan1.id].top + pos[wan1.id].h + INET_GAP;
     pos['gateway'] = makePos('gateway', canvasW / 2 - gwM.w / 2, gwTop);
+
+    // Secondary WANs (wan2+) — positioned to the right of the primary cloud
+    for (let i = 1; i < TOPOLOGY.wans.length; i++) {
+        const wan = TOPOLOGY.wans[i];
+        const wanM = measured[wan.id] || { w: 250, h: 125 };
+        // Place to the right: gateway right edge + gap
+        const wan2Left = canvasW / 2 + gwM.w / 2 + 60;
+        pos[wan.id] = makePos(wan.id, wan2Left, inetTop);
+    }
 
     // Children row: band-groups + satellite subtrees
     const childrenY = pos['gateway'].cardBottom + CLIENT_GAP;
@@ -661,10 +693,11 @@ function renderTopologyGraph() {
     }
     centerOverChildren('gateway');
 
-    // Center Internet over Gateway (align card centers)
-    if (pos['internet'] && pos['gateway']) {
-        const shift = pos['gateway'].cardCx - pos['internet'].cardCx;
-        if (Math.abs(shift) > 1) shiftPos(pos['internet'], shift);
+    // Center primary WAN over Gateway (align card centers)
+    const wan1Pos = pos[TOPOLOGY.wans[0]?.id];
+    if (wan1Pos && pos['gateway']) {
+        const shift = pos['gateway'].cardCx - wan1Pos.cardCx;
+        if (Math.abs(shift) > 1) shiftPos(wan1Pos, shift);
     }
 
     // ── Step 5: Position elements from computed layout ──
@@ -710,10 +743,11 @@ function renderTopologyGraph() {
     // ── Step 6: Build layout graph for layoutConnections() ──
     const g = new LayoutGraph();
     // Store positions using the actual final positions
+    const wanIdSet = new Set(TOPOLOGY.wans.map(w => w.id));
     Object.entries(pos).forEach(([id, p]) => {
-        g.setNode(id, { x: p.cardCx, top: p.cardTop, bottom: p.cardBottom, wrapperBottom: p.top + p.h, width: p.w, height: p.h, type: id === 'internet' ? 'internet' : 'device' });
+        g.setNode(id, { x: p.cardCx, top: p.cardTop, bottom: p.cardBottom, wrapperBottom: p.top + p.h, width: p.w, height: p.h, type: wanIdSet.has(id) ? 'internet' : 'device' });
     });
-    g.setEdge('internet', 'gateway');
+    TOPOLOGY.wans.forEach(w => g.setEdge(w.id, 'gateway'));
     function addEdges(parentId) {
         TOPOLOGY.satellites.filter(s => s.parentId === parentId).forEach(sat => {
             g.setEdge(parentId, sat.id);
@@ -760,7 +794,7 @@ function init() {
     startAnimations();
     updateStats();
     bindEvents();
-    resolveIsp(TOPOLOGY.internet);
+    TOPOLOGY.wans.forEach(w => resolveIsp(w));
     // Auto-center topology horizontally if content overflows
     requestAnimationFrame(() => {
         const container = document.getElementById('topologyContainer');
@@ -864,6 +898,18 @@ function createDeviceNode(device) {
     card.className = `device-card ${device.type}${isClient ? ' client' : ''}`;
     if (device.status === 'offline') {
         card.classList.add('offline-device');
+    }
+
+    // Set cloud stroke/glow color based on WAN status
+    if (device.type === 'internet') {
+        const wanColor = device.status === 'offline' ? 'var(--accent-red)' :
+            device.status === 'standby' ? 'var(--accent-amber)' : 'var(--accent-green)';
+        card.style.setProperty('--wan-stroke', device.status === 'offline'
+            ? 'rgba(248, 113, 113, 0.45)' : device.status === 'standby'
+            ? 'rgba(251, 191, 36, 0.45)' : 'rgba(52, 211, 153, 0.45)');
+        card.style.setProperty('--wan-glow', device.status === 'offline'
+            ? 'rgba(248, 113, 113, 0.2)' : device.status === 'standby'
+            ? 'rgba(251, 191, 36, 0.2)' : 'rgba(52, 211, 153, 0.2)');
     }
 
     if (device.type === 'satellite') {
@@ -976,6 +1022,16 @@ function createDeviceNode(device) {
         badge.className = 'client-count-badge';
         badge.textContent = `${totalClients} CLIENTS`;
         card.appendChild(badge);
+
+        // WAN failover badge (if any WAN is down and failover mode active)
+        const downWans = TOPOLOGY.wans.filter(w => w.status === 'offline');
+        const hasFailover = TOPOLOGY.wans.some(w => w.wanMode === 'failover') && downWans.length > 0 && downWans.length < TOPOLOGY.wans.length;
+        if (hasFailover) {
+            const foBadge = document.createElement('div');
+            foBadge.className = 'wan-failover-badge';
+            foBadge.textContent = 'FAILOVER';
+            card.appendChild(foBadge);
+        }
     } else if (device.type === 'satellite') {
         const satClients = TOPOLOGY.clients.filter(c => c.parentId === device.id).length;
         // Throughput is now shown in backhaul bar at top — no meta needed
@@ -1158,6 +1214,7 @@ function showClientTooltip(device, pillEl) {
                 <span class="tt-label">IP</span><span class="tt-value">${device.ip || '—'}</span>
                 <span class="tt-label">MAC</span><span class="tt-value">${device.mac || '—'}</span>
                 ${!isWired ? `<span class="tt-label">RSSI</span><span class="tt-value"><span style="color:${signalColor}">${rssiText}</span> · ${signalLabel}</span>` : ''}
+                ${isWired && device.lanPort ? `<span class="tt-label">Port</span><span class="tt-value">${device.lanPort}</span>` : ''}
                 <span class="tt-label">Rate</span><span class="tt-value">↓${device.rxRate || 0} / ↑${device.txRate || 0} Mbps</span>
                 <span class="tt-label">Traffic</span><span class="tt-value">${down > 0 || up > 0 ? `<span style="color:var(--accent-cyan)">↓${formatBandwidth(down)}</span> <span style="color:var(--accent-purple)">↑${formatBandwidth(up)}</span>` : '<span style="color:var(--text-muted)">Idle</span>'}</span>
                 <span class="tt-label">Uptime</span><span class="tt-value">${device.connectedSince || '—'}</span>
@@ -1240,7 +1297,7 @@ function layoutConnections() {
     const master = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     master.classList.add('bus-group');
 
-    // Helper: draw a line segment
+    // Helper: draw a line segment (returns the SVG element)
     function line(x1, y1, x2, y2, color, width) {
         const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         l.setAttribute('x1', x1); l.setAttribute('y1', y1);
@@ -1249,6 +1306,7 @@ function layoutConnections() {
         l.style.strokeWidth = width || 2;
         l.classList.add('infra-line');
         master.appendChild(l);
+        return l;
     }
 
     // Helper: draw a band label tag (colored rect + text) on the bus
@@ -1258,8 +1316,9 @@ function layoutConnections() {
 
         const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         textEl.setAttribute('x', cx);
-        textEl.setAttribute('y', cy + 4);
+        textEl.setAttribute('y', cy);
         textEl.setAttribute('text-anchor', 'middle');
+        textEl.setAttribute('dominant-baseline', 'central');
         textEl.setAttribute('font-size', '9');
         textEl.setAttribute('font-family', 'var(--font-mono)');
         textEl.setAttribute('font-weight', '600');
@@ -1320,16 +1379,44 @@ function layoutConnections() {
         });
     }
 
-    // === 1. Internet → Gateway ===
-    const inetNode = graph.node('internet');
+    // === 1. WAN → Gateway connections ===
     const gwNode = graph.node('gateway');
-    if (inetNode && gwNode) {
-        const color = CONN_COLORS.ethernet;
-        line(inetNode.x, inetNode.bottom, gwNode.x, gwNode.top, color);
-        // Center tag visually between Internet wrapper bottom and Gateway card top
-        // Nudge up 2px to compensate for text baseline offset inside tag
-        const tagY = (inetNode.wrapperBottom + gwNode.top) / 2 - 2;
-        bandTag(inetNode.x, tagY, TOPOLOGY.gateway.wanType || '10GbE WAN', color);
+    if (gwNode) {
+        // Compute shared tag Y from primary WAN (all tags at same height)
+        const wan1Node = graph.node(TOPOLOGY.wans[0]?.id);
+        const sharedTagY = wan1Node ? (wan1Node.wrapperBottom + gwNode.top) / 2 : gwNode.top - 20;
+
+        TOPOLOGY.wans.forEach((wan, idx) => {
+            const wanNode = graph.node(wan.id);
+            if (!wanNode) return;
+
+            const isDown = wan.status === 'offline';
+            // Status-based WAN colors: green=active, amber=standby, red=down
+            const color = isDown ? 'var(--accent-red)' :
+                wan.status === 'standby' ? 'var(--accent-amber)' :
+                'var(--accent-green)';
+
+            if (idx === 0) {
+                // Primary WAN: vertical line from cloud bottom to gateway top
+                const l = line(wanNode.x, wanNode.bottom, gwNode.x, gwNode.top, color);
+                if (isDown) { l.style.strokeDasharray = '6 4'; l.style.opacity = '0.5'; }
+                bandTag(wanNode.x, sharedTagY, wan.wanType || 'WAN', color);
+            } else {
+                // Secondary WAN: right-angle elbow from gateway right edge up to cloud
+                const gwCardRight = gwNode.x + gwNode.width / 2;
+                const gwMidY = (gwNode.top + gwNode.bottom) / 2;
+                const elbowX = wanNode.x; // cloud center X
+                // Horizontal segment: gateway card right edge → elbow
+                const h = line(gwCardRight, gwMidY, elbowX, gwMidY, color);
+                // Vertical segment: elbow up → cloud bottom
+                const v = line(elbowX, gwMidY, elbowX, wanNode.bottom, color);
+                if (isDown) {
+                    [h, v].forEach(seg => { seg.style.strokeDasharray = '6 4'; seg.style.opacity = '0.5'; });
+                }
+                // Tag at same height as primary WAN tag
+                bandTag(elbowX, sharedTagY, wan.wanType || 'WAN', color);
+            }
+        });
     }
 
     // === 2. Recursive device bus drawing ===
@@ -1424,8 +1511,10 @@ function verifyConnections(svg, nodesEl) {
 
     function matchesEdge(x, y) {
         for (const e of edges) {
-            if (Math.abs(y - e.t) < T && x >= e.l - T && x <= e.r + T) return true;
-            if (Math.abs(y - e.b) < T && x >= e.l - T && x <= e.r + T) return true;
+            if (Math.abs(y - e.t) < T && x >= e.l - T && x <= e.r + T) return true; // top edge
+            if (Math.abs(y - e.b) < T && x >= e.l - T && x <= e.r + T) return true; // bottom edge
+            if (Math.abs(x - e.l) < T && y >= e.t - T && y <= e.b + T) return true; // left edge
+            if (Math.abs(x - e.r) < T && y >= e.t - T && y <= e.b + T) return true; // right edge
         }
         return false;
     }
@@ -1608,6 +1697,26 @@ function updateStats() {
     document.getElementById('deviceCount').textContent = deviceCount;
     document.getElementById('clientCount').textContent = clientCount;
     document.getElementById('totalThroughput').textContent = `↓${formatBandwidth(totalDown)} ↑${formatBandwidth(totalUp)}`;
+
+    // Update system status badge based on WAN state
+    const statusEl = document.getElementById('systemStatus');
+    if (statusEl) {
+        const downWans = TOPOLOGY.wans.filter(w => w.status === 'offline');
+        const allDown = downWans.length === TOPOLOGY.wans.length;
+        const hasFailover = TOPOLOGY.wans.some(w => w.wanMode === 'failover') && downWans.length > 0 && !allDown;
+
+        statusEl.classList.remove('badge-online', 'badge-warning', 'badge-error');
+        if (allDown) {
+            statusEl.textContent = 'WAN Offline';
+            statusEl.classList.add('badge-error');
+        } else if (hasFailover) {
+            statusEl.textContent = 'WAN Failover Active';
+            statusEl.classList.add('badge-warning');
+        } else {
+            statusEl.textContent = 'All Systems Online';
+            statusEl.classList.add('badge-online');
+        }
+    }
 }
 
 // ── Detail Panel ───────────────────────────────────
@@ -1618,10 +1727,9 @@ function selectDevice(id) {
     const body = document.getElementById('detailBody');
 
     // Find device
-    let device = null;
-    if (id === 'internet') device = TOPOLOGY.internet;
-    else if (id === 'gateway') device = TOPOLOGY.gateway;
-    else device = TOPOLOGY.satellites.find(s => s.id === id) || TOPOLOGY.clients.find(c => c.id === id);
+    let device = TOPOLOGY.wans.find(w => w.id === id);
+    if (!device) device = id === 'gateway' ? TOPOLOGY.gateway :
+        (TOPOLOGY.satellites.find(s => s.id === id) || TOPOLOGY.clients.find(c => c.id === id));
 
     if (!device) return;
 
@@ -1663,12 +1771,24 @@ function renderDeviceDetail(device) {
     });
     html += '</div>';
 
+    // WAN info for internet-type devices
+    if (device.type === 'internet') {
+        html += '<div class="detail-section">';
+        html += '<div class="detail-section-title">WAN</div>';
+        if (device.wanType) html += `<div class="detail-row"><span class="label">Type</span><span class="value">${device.wanType}</span></div>`;
+        if (device.role) html += `<div class="detail-row"><span class="label">Role</span><span class="value" style="text-transform:capitalize">${device.role}</span></div>`;
+        if (device.wanMode) html += `<div class="detail-row"><span class="label">Mode</span><span class="value" style="text-transform:capitalize">${device.wanMode}</span></div>`;
+        if (device.interface) html += `<div class="detail-row"><span class="label">Interface</span><span class="value">${device.interface}</span></div>`;
+        html += '</div>';
+    }
+
     // Connection info for clients
     if (device.band || device.connection) {
         html += '<div class="detail-section">';
         html += '<div class="detail-section-title">Connection</div>';
         if (device.connection === 'ethernet') {
             html += '<div class="detail-row"><span class="label">Type</span><span class="value">Ethernet</span></div>';
+            if (device.lanPort) html += `<div class="detail-row"><span class="label">Port</span><span class="value">${device.lanPort}</span></div>`;
         } else {
             if (device.band) html += `<div class="detail-row"><span class="label">Band</span><span class="value">${device.band}</span></div>`;
             if (device.rssi) {
@@ -2037,7 +2157,7 @@ function applySnapshot(index) {
 
     const snap = tmSnapshots[index];
     // Replace TOPOLOGY fields
-    TOPOLOGY.internet = snap.internet;
+    TOPOLOGY.wans = snap.wans || [snap.internet];
     TOPOLOGY.gateway = snap.gateway;
     TOPOLOGY.satellites = snap.satellites;
     TOPOLOGY.clients = snap.clients;
@@ -2128,7 +2248,7 @@ function deactivateTimeMachine() {
     tmPause();
 
     // Restore live state
-    TOPOLOGY.internet = tmOriginalTopology.internet;
+    TOPOLOGY.wans = tmOriginalTopology.wans || [tmOriginalTopology.internet];
     TOPOLOGY.gateway = tmOriginalTopology.gateway;
     TOPOLOGY.satellites = tmOriginalTopology.satellites;
     TOPOLOGY.clients = tmOriginalTopology.clients;
@@ -2448,6 +2568,14 @@ function parseTopologyJson(raw) {
             client.connection = 'ethernet';
             client.rxRate = c.Duplex || 1000;
             client.txRate = c.Duplex || 1000;
+            // Derive LAN port from parent's Subordinates interface mapping
+            const parentHost = hosts.find(h => h.MAC === c.UpHost) || hub;
+            if (parentHost?.Subordinates) {
+                const sub = parentHost.Subordinates.find(s => s.MAC === c.MAC);
+                if (sub?.Interface) {
+                    client.lanPort = sub.Interface.toUpperCase().replace(/^ETH/, 'LAN');
+                }
+            }
         }
 
         if (qoe.Score != null) {
@@ -2466,20 +2594,48 @@ function parseTopologyJson(raw) {
         gateway.clients = clients.length;
     }
 
-    return {
-        internet: {
-            id: 'internet',
+    // Build WAN list — check for multi-WAN fields in topology.json
+    const wans = [{
+        id: 'wan1',
+        type: 'internet',
+        name: 'Internet',
+        ip: 'WAN',
+        wanIp: '',
+        isp: '',
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        latency: 0,
+        status: 'online',
+        uptime: '',
+        wanType: raw.Uplink === 'wan' ? 'Ethernet WAN' : (raw.Uplink || 'WAN'),
+        role: 'primary',
+    }];
+
+    // Check for secondary WAN (future SmartOS support)
+    // Possible fields: raw.SecondaryWAN, raw.WAN2, hub.WWAN, etc.
+    const secondaryWan = raw.SecondaryWAN || raw.WAN2 || (hub && hub.WWAN);
+    if (secondaryWan) {
+        wans.push({
+            id: 'wan2',
             type: 'internet',
             name: 'Internet',
             ip: 'WAN',
-            wanIp: '',
-            isp: '',
-            downloadSpeed: 0,
-            uploadSpeed: 0,
-            latency: 0,
-            status: 'online',
+            wanIp: secondaryWan.Address || '',
+            isp: secondaryWan.ISP || secondaryWan.Carrier || '',
+            downloadSpeed: secondaryWan.DownloadSpeed || 0,
+            uploadSpeed: secondaryWan.UploadSpeed || 0,
+            latency: secondaryWan.Latency || 0,
+            status: secondaryWan.State === 'Active' ? 'online' : 'offline',
             uptime: '',
-        },
+            wanType: secondaryWan.Type || 'WWAN',
+            wanMode: secondaryWan.Mode || 'failover',
+            role: 'secondary',
+            interface: secondaryWan.Interface || 'USB',
+        });
+    }
+
+    return {
+        wans,
         gateway,
         satellites,
         clients,
