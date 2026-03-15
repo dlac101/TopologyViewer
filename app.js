@@ -378,6 +378,13 @@ function init() {
     updateStats();
     bindEvents();
     resolveIsp(TOPOLOGY.internet);
+    // Auto-center topology horizontally if content overflows
+    requestAnimationFrame(() => {
+        const container = document.getElementById('topologyContainer');
+        if (container && container.scrollWidth > container.clientWidth) {
+            container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
+        }
+    });
     window.addEventListener('resize', debounce(() => {
         layoutConnections();
     }, 100));
