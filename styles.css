@@ -1254,6 +1254,19 @@ body {
     gap: 4px;
 }
 
+/* --- Band Group (dagre-positioned client pill container) --- */
+.band-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.band-group-pills {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
 @keyframes activityPulseMedium {
     0%, 100% { box-shadow: var(--shadow-card), 0 0 8px rgba(34, 211, 238, 0.15); }
     50% { box-shadow: var(--shadow-card), 0 0 14px rgba(34, 211, 238, 0.3); }
@@ -1479,6 +1492,9 @@ body {
 
 /* --- Simplified View --- */
 .simplified .band-branch {
+    display: none;
+}
+.simplified .band-group {
     display: none;
 }
 
