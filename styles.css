@@ -217,17 +217,30 @@ body {
 .badge {
     font-size: clamp(8px, 0.85vw, 11px);
     font-weight: 600;
-    padding: clamp(2px, 0.3vw, 3px) clamp(6px, 0.7vw, 10px);
+    padding: clamp(3px, 0.35vw, 4px) clamp(6px, 0.7vw, 10px) clamp(2px, 0.25vw, 3px);
     border-radius: 100px;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     white-space: nowrap;
+    line-height: 1;
 }
 
 .badge-online {
     background: rgba(52, 211, 153, 0.12);
     color: var(--accent-green);
     border: 1px solid rgba(52, 211, 153, 0.2);
+}
+
+.badge-warning {
+    background: rgba(251, 191, 36, 0.12);
+    color: var(--accent-amber);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.badge-error {
+    background: rgba(248, 113, 113, 0.12);
+    color: var(--accent-red);
+    border: 1px solid rgba(248, 113, 113, 0.2);
 }
 
 .top-bar-right {
@@ -407,15 +420,15 @@ body {
     z-index: -1;
     background: var(--bg-card);
     clip-path: url(#cloud-clip);
-    filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.1));
+    filter: drop-shadow(0 0 12px var(--wan-glow, rgba(34, 211, 238, 0.15)));
 }
 
 .device-card.internet::after {
     content: '';
     position: absolute;
-    inset: -55.5px -29.5px -11.5px -29.5px;
+    inset: -56px -30px -12px -30px;
     z-index: -2;
-    background: rgba(34, 211, 238, 0.3);
+    background: var(--wan-stroke, rgba(34, 211, 238, 0.4));
     clip-path: url(#cloud-clip);
 }
 
@@ -1190,9 +1203,28 @@ body {
     font-weight: 600;
     font-family: var(--font-mono);
     letter-spacing: 0.03em;
-    padding: 2px 8px;
+    padding: 3px 8px 2px;
     border-radius: 100px;
     white-space: nowrap;
+    line-height: 1;
+}
+
+.wan-failover-badge {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translate(50%, -50%);
+    background: var(--accent-amber);
+    color: #0b0f19;
+    font-size: 8px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    letter-spacing: 0.05em;
+    padding: 3px 6px 2px;
+    border-radius: 100px;
+    white-space: nowrap;
+    line-height: 1;
+    z-index: 2;
 }
 
 /* --- Tier spacing ---
