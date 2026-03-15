@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "topology",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3457", "-d", "C:/Users/Admin/Documents/Claude Work/Topology GUI"],
+      "port": 3457
+    }
+  ]
+}
