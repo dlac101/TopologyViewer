@@ -6,16 +6,16 @@ A real-time network topology visualization for Intellifi SmartOS mesh networks. 
 
 ## Features
 
-- **Hierarchical topology map** -Internet, gateway, satellites, and clients rendered as a tree with automatic layout
-- **Measure-first layout engine** -DOM elements are measured before positioning, ensuring accurate connection lines with zero gaps
-- **Multi-hop mesh support** -Visualizes 3+ hop satellite chains with backhaul quality indicators (speed, SNR, Wi-Fi version)
-- **Client band grouping** -Clients organized by radio band (2.4 GHz, 5 GHz, 6 GHz, Ethernet) with colored pills showing RSSI and Wi-Fi generation
-- **Connection integrity checker** -Automated `verifyConnections()` validates every SVG line endpoint connects to a device edge, flags diagonal lines
-- **Live animations** -Throughput values pulse with randomized variance, CSS-animated flow lines on active connections
-- **Dark/light theme** -Toggle between dark and light modes
-- **Detail panel** -Click any device or client for expanded stats (interfaces, radios, CPU, memory, temperature)
-- **Time Machine** -Playback bar for historical topology snapshots
-- **Responsive** -Auto-simplifies to compact view when elements would overlap
+- **Hierarchical topology map** - Internet, gateway, satellites, and clients rendered as a tree with automatic layout
+- **Measure-first layout engine** - DOM elements are measured before positioning, ensuring accurate connection lines with zero gaps
+- **Multi-hop mesh support** - Visualizes 3+ hop satellite chains with backhaul quality indicators (speed, SNR, Wi-Fi version)
+- **Client band grouping** - Clients organized by radio band (2.4 GHz, 5 GHz, 6 GHz, Ethernet) with colored pills showing RSSI and Wi-Fi generation
+- **Connection integrity checker** - Automated `verifyConnections()` validates every SVG line endpoint connects to a device edge, flags diagonal lines
+- **Live animations** - Throughput values pulse with randomized variance, CSS-animated flow lines on active connections
+- **Dark/light theme** - Toggle between dark and light modes
+- **Detail panel** - Click any device or client for expanded stats (interfaces, radios, CPU, memory, temperature)
+- **Time Machine** - Playback bar for historical topology snapshots
+- **Responsive** - Auto-simplifies to compact view when elements would overlap
 
 ## Architecture
 
