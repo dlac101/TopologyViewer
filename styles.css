@@ -1802,12 +1802,53 @@ body {
     margin-top: 4px;
     position: relative;
     cursor: crosshair;
+    display: flex;
+    align-items: flex-end;
+    gap: 0;
+}
+
+.qoe-sparkline-wrap {
+    flex: 1;
+    min-width: 0;
 }
 
 .detail-qoe-sparkline .qoe-sparkline-svg {
     display: block;
     width: 100%;
-    height: 80px;
+    height: 110px;
+}
+
+.qoe-hm-labels {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-right: 3px;
+    flex-shrink: 0;
+    justify-content: flex-end;
+    padding-bottom: 13px; /* offset for time labels below SVG */
+}
+
+.qoe-hm-label {
+    font-family: var(--font-mono);
+    font-size: 7.5px;
+    font-weight: 400;
+    color: #f3f4f6;
+    line-height: 5.7px;
+    height: 5.7px;
+    display: flex;
+    align-items: center;
+}
+
+.qoe-time-labels {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 4px 0;
+}
+.qoe-time-labels span {
+    font-family: var(--font-mono);
+    font-size: 7.5px;
+    font-weight: 400;
+    color: #f3f4f6;
 }
 
 /* --- QoE Sparkline hover elements --- */
