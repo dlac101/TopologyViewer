@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intellifi Topology</title>
-    <link rel="stylesheet" href="styles.css?v=117">
+    <link rel="stylesheet" href="styles.css?v=122">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
@@ -110,9 +110,11 @@
             <div class="tm-playback-bar" id="tmPlaybackBar">
                 <div class="tm-controls">
                     <button class="tm-btn" id="tmSkipStart" title="Skip to start"><i class="ph-bold ph-skip-back"></i></button>
+                    <button class="tm-btn" id="tmPrevEvent" title="Previous event"><i class="ph-bold ph-arrow-fat-left"></i></button>
                     <button class="tm-btn" id="tmStepBack" title="Step back"><i class="ph-bold ph-caret-left"></i></button>
                     <button class="tm-btn tm-btn-play" id="tmPlayPause" title="Play"><i class="ph-bold ph-play"></i></button>
                     <button class="tm-btn" id="tmStepFwd" title="Step forward"><i class="ph-bold ph-caret-right"></i></button>
+                    <button class="tm-btn" id="tmNextEvent" title="Next event"><i class="ph-bold ph-arrow-fat-right"></i></button>
                     <button class="tm-btn" id="tmSkipEnd" title="Skip to end"><i class="ph-bold ph-skip-forward"></i></button>
                 </div>
                 <div class="tm-timeline">
@@ -170,6 +172,6 @@
         </aside>
     </main>
 
-    <script src="app.js?v=118"></script>
+    <script src="app.js?v=135"></script>
 </body>
 </html>
