@@ -2804,6 +2804,7 @@ let tmPlayInterval = null;
 let tmPlaySpeed = 1;           // 1x, 2x, 4x
 let tmSampleInterval = 60;     // seconds between snapshots (default 60s)
 let tmOriginalTopology = null; // deep clone of live TOPOLOGY for restoration
+let tmWasPlayingBeforeScrub = false;
 
 function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
@@ -2984,6 +2985,143 @@ function generateMockSnapshots() {
 }
 
 let tmPrevSnap = null; // track previous snapshot for diffing
+let tmEventMarkers = []; // [{index, pct, events, severity}]
+let tmEventClusters = []; // [{startIndex, endIndex, startPct, endPct, severity}]
+
+function buildTmEventMarkers() {
+    tmEventMarkers = [];
+    tmEventClusters = [];
+    const total = tmSnapshots.length;
+    if (total < 2) return;
+    const severityOrder = { critical: 0, warn: 1, info: 2, ok: 3 };
+    const typeToSeverity = { offline: 'critical', topology: 'critical', roam: 'info', band: 'warn', online: 'ok' };
+
+    tmSnapshots.forEach((snap, i) => {
+        if (!snap._events || snap._events.length === 0) return;
+        let severity = 'ok';
+        snap._events.forEach(evt => {
+            const s = typeToSeverity[evt.type] || 'info';
+            if (severityOrder[s] < severityOrder[severity]) severity = s;
+        });
+        tmEventMarkers.push({
+            index: i,
+            pct: i / (total - 1),
+            events: snap._events,
+            severity,
+            timestamp: snap._timestamp
+        });
+    });
+
+    // Build clusters — consecutive markers (gap <= 2) grouped together
+    if (tmEventMarkers.length === 0) return;
+    let cluster = { startIndex: tmEventMarkers[0].index, endIndex: tmEventMarkers[0].index, severity: tmEventMarkers[0].severity };
+    const severityMax = (a, b) => severityOrder[a] <= severityOrder[b] ? a : b;
+    for (let i = 1; i < tmEventMarkers.length; i++) {
+        if (tmEventMarkers[i].index - tmEventMarkers[i - 1].index <= 2) {
+            cluster.endIndex = tmEventMarkers[i].index;
+            cluster.severity = severityMax(cluster.severity, tmEventMarkers[i].severity);
+        } else {
+            cluster.startPct = cluster.startIndex / (total - 1);
+            cluster.endPct = cluster.endIndex / (total - 1);
+            tmEventClusters.push(cluster);
+            cluster = { startIndex: tmEventMarkers[i].index, endIndex: tmEventMarkers[i].index, severity: tmEventMarkers[i].severity };
+        }
+    }
+    cluster.startPct = cluster.startIndex / (total - 1);
+    cluster.endPct = cluster.endIndex / (total - 1);
+    tmEventClusters.push(cluster);
+}
+
+function renderTmMarkers() {
+    const timeline = document.querySelector('.tm-timeline');
+    if (!timeline) return;
+    // Remove existing
+    timeline.querySelector('.tm-markers')?.remove();
+
+    const container = document.createElement('div');
+    container.className = 'tm-markers';
+
+    const severityLabels = { critical: 'Offline', warn: 'Band', info: 'Roam', ok: 'Online' };
+
+    // Render cluster bars instead of individual dots
+    tmEventClusters.forEach(c => {
+        const bar = document.createElement('div');
+        bar.className = `tm-marker severity-${c.severity}`;
+        const leftPct = (c.startPct * 100).toFixed(2);
+        const widthPct = Math.max(0.4, ((c.endPct - c.startPct) * 100)).toFixed(2);
+        bar.style.left = `${leftPct}%`;
+        bar.style.width = `${widthPct}%`;
+        bar.dataset.index = Math.max(0, c.startIndex - 1); // lead-in frame
+
+        // Label centered above bar
+        const label = document.createElement('span');
+        label.className = 'tm-marker-label';
+        label.textContent = severityLabels[c.severity] || '';
+        bar.appendChild(label);
+
+        // Tooltip from first marker in cluster
+        const firstMarker = tmEventMarkers.find(m => m.index === c.startIndex);
+        if (firstMarker) {
+            const time = new Date(firstMarker.timestamp);
+            const timeStr = time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            bar.title = `${timeStr} — ${severityLabels[c.severity] || 'Event'}`;
+        }
+
+        container.appendChild(bar);
+    });
+
+    // Click-to-jump (jump to lead-in frame)
+    container.addEventListener('click', (e) => {
+        const marker = e.target.closest('.tm-marker');
+        if (!marker) return;
+        const idx = parseInt(marker.dataset.index);
+        const slider = document.getElementById('tmSlider');
+        if (slider) slider.value = idx;
+        applySnapshot(idx);
+    });
+
+    timeline.appendChild(container);
+}
+
+function tmSkipToNextEvent() {
+    // Find next cluster we haven't reached yet (beyond the current cluster's end)
+    const next = tmEventClusters.find(c => c.endIndex >= tmCurrentIndex && c.startIndex > tmCurrentIndex)
+        || tmEventClusters.find(c => c.startIndex > tmCurrentIndex + 1);
+    if (!next) return;
+    // Jump 1 frame before cluster start so the transition animation plays
+    const target = Math.max(0, next.startIndex - 1);
+    if (target === tmCurrentIndex) {
+        // Already at lead-in, jump to next cluster instead
+        const nextNext = tmEventClusters.find(c => c.startIndex > next.endIndex);
+        if (!nextNext) return;
+        const t2 = Math.max(0, nextNext.startIndex - 1);
+        const slider = document.getElementById('tmSlider');
+        if (slider) slider.value = t2;
+        applySnapshot(t2);
+        return;
+    }
+    const slider = document.getElementById('tmSlider');
+    if (slider) slider.value = target;
+    applySnapshot(target);
+}
+
+function tmSkipToPrevEvent() {
+    // Find previous cluster whose lead-in is strictly before current position
+    for (let i = tmEventClusters.length - 1; i >= 0; i--) {
+        const c = tmEventClusters[i];
+        const leadIn = Math.max(0, c.startIndex - 1);
+        if (leadIn < tmCurrentIndex) {
+            const slider = document.getElementById('tmSlider');
+            if (slider) slider.value = leadIn;
+            applySnapshot(leadIn);
+            return;
+        }
+    }
+}
+
+function clearTmMarkers() {
+    document.querySelector('.tm-markers')?.remove();
+}
 let tmIsFirstSnapshot = true;
 
 function applySnapshot(index) {
@@ -3003,21 +3141,20 @@ function applySnapshot(index) {
         Math.abs(index - prevIndex) <= 3;
 
     if (canIncremental) {
-        applySnapshotIncremental(snap);
+        // Labels linger naturally — no need to clear; updateEventLabels (after FLIP) manages lifecycle
+        // applySnapshotIncremental handles stats internally;
+        // returns true if topology changed (full rebuild happened)
+        const layoutChanged = applySnapshotIncremental(snap, snap._events || []);
+        if (layoutChanged) {
+            layoutConnections();
+        }
     } else {
+        tmLayoutSignature = ''; // reset — full rebuild
         renderTopologyGraph();
-    }
-    layoutConnections();
-    updateStats();
-    updateClientActivityPulses();
-
-    // Clear old event labels and show new ones for this snapshot
-    tmEventLabelTimers.forEach(t => clearTimeout(t));
-    tmEventLabelTimers = [];
-    document.querySelectorAll('.tm-event-label').forEach(el => el.remove());
-
-    if (snap._events && snap._events.length > 0 && canIncremental) {
-        snap._events.forEach(evt => showClientEvent(evt));
+        layoutConnections();
+        updateStats();
+        updateClientActivityPulses();
+        updateEventLabels([]);
     }
 
     tmIsFirstSnapshot = false;
@@ -3041,34 +3178,96 @@ function applySnapshot(index) {
     updateTmBadge();
 }
 
-// ── Incremental DOM update for Time Machine ──
-// Instead of full rebuild, reuses existing DOM elements and lets CSS transitions animate
-function applySnapshotIncremental(snap) {
-    const container = document.getElementById('topologyNodes');
+// ── Incremental DOM update for Time Machine (WAAPI) ──
+// Uses Web Animations API for compositor-thread animations.
+// WAAPI-based FLIP animation for Time Machine.
+// Animations run on compositor thread — no main-thread layout thrashing.
+let tmFlipAnimations = []; // active WAAPI Animation objects
+let tmLayoutSignature = ''; // topology layout fingerprint to skip redundant rebuilds
 
-    // Record old positions for FLIP animation
+function tmCancelAnimations() {
+    tmFlipAnimations.forEach(a => a.cancel());
+    tmFlipAnimations = [];
+}
+
+// Build a string signature of the topology layout.
+// If this matches between frames, the DOM layout is identical and we can skip rebuilding.
+function tmBuildLayoutSignature(snap) {
+    // Layout depends on: which devices exist, which clients connect where, and which band
+    const parts = [];
+    // Satellites (presence + order)
+    if (snap.satellites) parts.push(snap.satellites.map(s => s.id + ':' + s.status).join(','));
+    // Clients: id → parentDevice + band determines placement
+    if (snap.clients) {
+        const sorted = [...snap.clients].sort((a, b) => a.id.localeCompare(b.id));
+        sorted.forEach(c => parts.push(`${c.id}@${c.connectedTo || ''}:${c.band || ''}`));
+    }
+    return parts.join('|');
+}
+
+function applySnapshotIncremental(snap, pendingEvents) {
+    const container = document.getElementById('topologyNodes');
+    const newSig = tmBuildLayoutSignature(snap);
+
+    // ── Fast path: topology layout unchanged — let animations run uninterrupted ──
+    if (newSig === tmLayoutSignature && tmFlipAnimations.length > 0) {
+        // Just update stats text in-place (no DOM rebuild, no layout reads)
+        updateStats();
+        updateClientActivityPulses();
+        return false; // no layout change
+    }
+    tmLayoutSignature = newSig;
+
+    // ── Full FLIP path: topology changed, animate to new positions ──
+
+    // Capture current VISUAL positions BEFORE cancelling animations
+    // (getBoundingClientRect returns mid-animation position while WAAPI is active)
     const oldRects = {};
     container.querySelectorAll('.device-node, .band-group, .client-node').forEach(el => {
         const id = el.dataset.id || el.dataset.groupId;
         if (id) oldRects[id] = el.getBoundingClientRect();
     });
 
-    // Full DOM rebuild — renderTopologyGraph will create fresh elements
+    // NOW cancel in-flight animations (elements snap to layout positions)
+    tmCancelAnimations();
+
+    // Full DOM rebuild
     renderTopologyGraph();
 
-    // FLIP: record new positions, compute delta, apply inverse transform, then release
+    // FLIP: compute deltas and animate with WAAPI
     const flipEls = container.querySelectorAll('.device-node, .band-group, .client-node');
-    const toAnimate = [];
+    const SPEED = 400;       // px/s for devices & groups
+    const SPEED_CLIENT = 200; // px/s for client pills (band changes)
+    const animations = [];
 
+    // First pass: find the longest client-node animation duration (the roaming pill)
+    let maxClientDur = 0;
+    flipEls.forEach(el => {
+        if (!el.classList.contains('client-node')) return;
+        const id = el.dataset.id;
+        const oldRect = id ? oldRects[id] : null;
+        if (!oldRect) return;
+        const newRect = el.getBoundingClientRect();
+        const dx = oldRect.left - newRect.left;
+        const dy = oldRect.top - newRect.top;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 100) { // cross-group move
+            const dur = Math.min(3000, Math.max(300, (dist / SPEED_CLIENT) * 1000));
+            if (dur > maxClientDur) maxClientDur = dur;
+        }
+    });
+
+    // Second pass: create FLIP animations
     flipEls.forEach(el => {
         const id = el.dataset.id || el.dataset.groupId;
         const oldRect = id ? oldRects[id] : null;
         if (!oldRect) {
-            // New element — fade in
-            el.classList.add('tm-entering');
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => el.classList.remove('tm-entering'));
-            });
+            // New element — fade in via WAAPI
+            const a = el.animate(
+                [{ opacity: 0 }, { opacity: 1 }],
+                { duration: 200, easing: 'ease-out', fill: 'none' }
+            );
+            animations.push(a);
             return;
         }
         const newRect = el.getBoundingClientRect();
@@ -3076,96 +3275,160 @@ function applySnapshotIncremental(snap) {
         const dy = oldRect.top - newRect.top;
         if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
 
-        // Invert: instantly place at old position (no transition)
-        el.style.transition = 'none';
-        el.style.transform = `translate(${dx}px, ${dy}px)`;
-        toAnimate.push(el);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const isClient = el.classList.contains('client-node');
+        const speed = isClient ? SPEED_CLIENT : SPEED;
+        let dur = Math.min(3000, Math.max(300, (dist / speed) * 1000));
+
+        // Short-distance client shuffles: stretch to match the incoming pill's duration
+        // so the stack opens gradually as the pill travels, not all at once
+        if (isClient && dist < 100 && maxClientDur > 0) {
+            dur = maxClientDur;
+        }
+
+        const a = el.animate(
+            [
+                { transform: `translate(${dx}px, ${dy}px)` },
+                { transform: 'translate(0, 0)' }
+            ],
+            {
+                duration: dur,
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+                fill: 'none'
+            }
+        );
+        animations.push(a);
     });
 
-    // Force reflow so the browser commits the inverted transforms
-    void container.offsetHeight;
+    tmFlipAnimations = animations;
 
-    // Play: use double-rAF to guarantee the inversion is painted before releasing
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            toAnimate.forEach(el => {
-                el.style.transition = '';
-                el.style.transform = '';
-            });
+    // Show event labels after ALL animations finish
+    if (pendingEvents && pendingEvents.length > 0 && animations.length > 0) {
+        const allDone = Promise.all(animations.map(a => a.finished.catch(() => {})));
+        allDone.then(() => {
+            // Only show if these animations are still the current set
+            if (tmFlipAnimations === animations) {
+                updateEventLabels(pendingEvents);
+            }
         });
+    } else if (pendingEvents && pendingEvents.length > 0) {
+        // No animations — show labels immediately
+        updateEventLabels(pendingEvents);
+    }
+    return true; // layout changed
+}
+
+// ── Event labels (persistent overlay, outside FLIP tree) ──
+let tmEventLabelMap = new Map(); // key → {el, clientId, lingerTimeout}
+const TM_LABEL_LINGER_MS = 3000; // how long labels stay visible after appearing
+
+function ensureEventOverlay() {
+    let overlay = document.getElementById('tmEventOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'tmEventOverlay';
+        overlay.className = 'tm-event-overlay';
+        document.getElementById('topologyContainer').appendChild(overlay);
+    }
+    return overlay;
+}
+
+function updateEventLabels(events) {
+    const overlay = ensureEventOverlay();
+    const nodesContainer = document.getElementById('topologyNodes');
+    const containerRect = document.getElementById('topologyContainer').getBoundingClientRect();
+
+    const typeLabels = { roam: 'Roam →', band: 'Band →', offline: '', online: '', topology: '' };
+    const newKeys = new Set(events.map(e => `${e.clientId}:${e.type}`));
+
+    // Start fading labels no longer in current events (don't remove yet — they linger)
+    for (const [key, entry] of tmEventLabelMap) {
+        if (!newKeys.has(key) && !entry.fading) {
+            startLabelFadeout(key, entry);
+        }
+    }
+
+    // Track per-target stacking offset
+    const targetOffsets = {};
+
+    // Add or reposition labels
+    events.forEach(evt => {
+        const key = `${evt.clientId}:${evt.type}`;
+        const target = nodesContainer.querySelector(`[data-id="${evt.clientId}"]`);
+        if (!target) return;
+
+        const targetRect = target.getBoundingClientRect();
+        const x = targetRect.left + targetRect.width / 2 - containerRect.left;
+        const stackIdx = targetOffsets[evt.clientId] || 0;
+        targetOffsets[evt.clientId] = stackIdx + 1;
+        const y = targetRect.top - containerRect.top - 18 - (stackIdx * 20);
+
+        let entry = tmEventLabelMap.get(key);
+        if (entry && entry.fading) {
+            // Re-activate a fading label (event reappeared)
+            clearTimeout(entry.lingerTimeout);
+            clearTimeout(entry.fadeTimeout);
+            entry.fading = false;
+            entry.el.classList.remove('tm-label-fading');
+        }
+        if (!entry || entry.fading) {
+            // Create new label
+            const prefix = typeLabels[evt.type] ?? '';
+            const text = prefix ? `${prefix} ${evt.detail}` : evt.detail;
+            const label = document.createElement('div');
+            label.className = `tm-event-label tm-event-${evt.type}`;
+            label.textContent = text;
+            overlay.appendChild(label);
+            // Fade in via WAAPI (doesn't interfere with CSS pulse animation)
+            label.animate(
+                [{ opacity: 0, transform: 'translateX(-50%) translateY(4px)' },
+                 { opacity: 1, transform: 'translateX(-50%) translateY(0)' }],
+                { duration: 400, easing: 'ease-out', fill: 'none' }
+            );
+            entry = { el: label, clientId: evt.clientId, fading: false };
+            tmEventLabelMap.set(key, entry);
+        }
+
+        // Schedule linger timeout — label fades out after TM_LABEL_LINGER_MS
+        if (entry.lingerTimeout) clearTimeout(entry.lingerTimeout);
+        entry.lingerTimeout = setTimeout(() => {
+            startLabelFadeout(key, entry);
+        }, TM_LABEL_LINGER_MS);
+
+        // Position (no transition — instant, zero overhead)
+        entry.el.style.left = `${x}px`;
+        entry.el.style.top = `${y}px`;
     });
 }
 
-// ── Event pop-in labels ──
-let tmEventLabelTimers = []; // track fade-out timers so we can freeze them
-
-function showClientEvent(evt) {
-    const container = document.getElementById('topologyNodes');
-    const target = container.querySelector(`[data-id="${evt.clientId}"]`);
-    if (!target) return;
-
-    const typeLabels = {
-        roam: 'Roam →',
-        band: 'Band →',
-        offline: '',
-        online: '',
-        topology: '',
-    };
-    const prefix = typeLabels[evt.type] ?? '';
-    const text = prefix ? `${prefix} ${evt.detail}` : evt.detail;
-
-    const label = document.createElement('div');
-    label.className = `tm-event-label tm-event-${evt.type}`;
-    label.textContent = text;
-
-    // Attach as child of target so it moves with FLIP animations
-    target.style.position = target.style.position || 'relative';
-    label.style.top = '-18px';
-    target.appendChild(label);
-
-    // Fade in
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            label.classList.add('tm-event-visible');
-        });
-    });
-
-    // Schedule fade-out (can be frozen by pause)
-    const timerId = setTimeout(() => {
-        if (label.classList.contains('tm-frozen')) return; // frozen, don't fade
-        fadeOutEventLabel(label);
-    }, 4000);
-
-    label._fadeTimer = timerId;
-    tmEventLabelTimers.push(timerId);
+function startLabelFadeout(key, entry) {
+    if (entry.fading) return;
+    entry.fading = true;
+    entry.el.classList.add('tm-label-fading');
+    // Remove from DOM after fade animation (600ms)
+    entry.fadeTimeout = setTimeout(() => {
+        entry.el.remove();
+        tmEventLabelMap.delete(key);
+    }, 600);
 }
 
-function fadeOutEventLabel(label) {
-    label.classList.remove('tm-event-visible');
-    label.addEventListener('transitionend', () => label.remove(), { once: true });
-    // Safety cleanup in case transitionend doesn't fire
-    setTimeout(() => { if (label.parentNode) label.remove(); }, 500);
+function clearEventLabels(immediate) {
+    if (immediate) {
+        // Hard clear — TM deactivation
+        for (const [, entry] of tmEventLabelMap) {
+            if (entry.lingerTimeout) clearTimeout(entry.lingerTimeout);
+            if (entry.fadeTimeout) clearTimeout(entry.fadeTimeout);
+        }
+        const overlay = document.getElementById('tmEventOverlay');
+        if (overlay) overlay.innerHTML = '';
+        tmEventLabelMap.clear();
+    }
+    // Non-immediate: do nothing — let labels linger and fade naturally
 }
 
-function tmFreezeEventLabels() {
-    // Cancel all pending fade-out timers
-    tmEventLabelTimers.forEach(t => clearTimeout(t));
-    tmEventLabelTimers = [];
-    // Freeze all visible labels
-    document.querySelectorAll('.tm-event-label').forEach(label => {
-        label.classList.add('tm-frozen');
-    });
-}
-
-function tmUnfreezeEventLabels() {
-    document.querySelectorAll('.tm-event-label.tm-frozen').forEach(label => {
-        label.classList.remove('tm-frozen');
-        // Restart fade-out timer from now
-        const timerId = setTimeout(() => fadeOutEventLabel(label), 2000);
-        label._fadeTimer = timerId;
-        tmEventLabelTimers.push(timerId);
-    });
-}
+// No-ops for freeze/unfreeze since labels are now static
+function tmFreezeEventLabels() {}
+function tmUnfreezeEventLabels() {}
 
 function updateTmBadge() {
     const badge = document.querySelector('.badge');
@@ -3196,6 +3459,9 @@ function activateTimeMachine() {
     tmIsFirstSnapshot = true;
     tmPrevSnap = null;
 
+    // Build and render event markers on timeline
+    buildTmEventMarkers();
+
     // Update UI
     document.body.classList.add('time-machine-active');
     const bar = document.getElementById('tmPlaybackBar');
@@ -3206,6 +3472,9 @@ function activateTimeMachine() {
         slider.max = tmSnapshots.length - 1;
         slider.value = 0;
     }
+
+    // Render event markers on timeline
+    renderTmMarkers();
 
     // Update badge
     const badge = document.querySelector('.badge');
@@ -3228,6 +3497,10 @@ function deactivateTimeMachine() {
 
     // Stop playback
     tmPause();
+
+    // Clear event markers
+    clearTmMarkers();
+    tmEventMarkers = [];
 
     // Restore live state
     TOPOLOGY.wans = tmOriginalTopology.wans || [tmOriginalTopology.internet];
@@ -3266,10 +3539,11 @@ function deactivateTimeMachine() {
     tmPrevSnap = null;
     tmIsFirstSnapshot = true;
 
-    // Remove any lingering event labels and cancel timers
-    tmEventLabelTimers.forEach(t => clearTimeout(t));
-    tmEventLabelTimers = [];
-    document.querySelectorAll('.tm-event-label').forEach(el => el.remove());
+    // Cancel animations and remove event labels overlay
+    tmCancelAnimations();
+    tmLayoutSignature = '';
+    clearEventLabels(true);
+    document.getElementById('tmEventOverlay')?.remove();
 }
 
 function tmPlay() {
@@ -3332,6 +3606,7 @@ function tmCycleInterval() {
     // Regenerate snapshots with new interval and re-apply
     tmPause();
     tmSnapshots = generateMockSnapshots();
+    buildTmEventMarkers();
     const slider = document.getElementById('tmSlider');
     if (slider) {
         slider.max = tmSnapshots.length - 1;
@@ -3339,6 +3614,7 @@ function tmCycleInterval() {
         tmCurrentIndex = Math.min(tmCurrentIndex, tmSnapshots.length - 1);
         slider.value = tmCurrentIndex;
     }
+    renderTmMarkers();
     applySnapshot(tmCurrentIndex);
 }
 
@@ -3371,16 +3647,31 @@ function bindTimeMachineEvents() {
         tmPause();
         applySnapshot(tmSnapshots.length - 1);
     });
+    document.getElementById('tmPrevEvent')?.addEventListener('click', tmSkipToPrevEvent);
+    document.getElementById('tmNextEvent')?.addEventListener('click', tmSkipToNextEvent);
     document.getElementById('tmSpeed')?.addEventListener('click', tmCycleSpeed);
     document.getElementById('tmInterval')?.addEventListener('click', tmCycleInterval);
     document.getElementById('tmExit')?.addEventListener('click', deactivateTimeMachine);
 
-    // Slider scrubbing
+    // Slider scrubbing — resume playback on release if was playing
     const slider = document.getElementById('tmSlider');
     if (slider) {
-        slider.addEventListener('input', () => {
+        slider.addEventListener('mousedown', () => {
+            tmWasPlayingBeforeScrub = !!tmPlayInterval;
             tmPause();
+        });
+        slider.addEventListener('touchstart', () => {
+            tmWasPlayingBeforeScrub = !!tmPlayInterval;
+            tmPause();
+        }, { passive: true });
+        slider.addEventListener('input', () => {
             applySnapshot(parseInt(slider.value));
+        });
+        slider.addEventListener('change', () => {
+            if (tmWasPlayingBeforeScrub) {
+                tmWasPlayingBeforeScrub = false;
+                tmPlay();
+            }
         });
     }
 
@@ -3405,6 +3696,14 @@ function bindTimeMachineEvents() {
                 break;
             case 'Escape':
                 deactivateTimeMachine();
+                break;
+            case '[':
+                e.preventDefault();
+                tmSkipToPrevEvent();
+                break;
+            case ']':
+                e.preventDefault();
+                tmSkipToNextEvent();
                 break;
         }
     });
