@@ -11,9 +11,11 @@ A real-time network topology visualization for Intellifi SmartOS mesh networks. 
 - **Multi-hop mesh support** - Visualizes 3+ hop satellite chains with backhaul quality indicators (speed, SNR, Wi-Fi version)
 - **Client band grouping** - Clients organized by radio band (2.4 GHz, 5 GHz, 6 GHz, Ethernet) with colored pills showing RSSI and Wi-Fi generation
 - **Connection integrity checker** - Automated `verifyConnections()` validates every SVG line endpoint connects to a device edge, flags diagonal lines
+- **Multi-WAN failover** - Dual internet clouds with primary/backup roles, live failover status badge on the gateway
 - **Live animations** - Throughput values pulse with randomized variance, CSS-animated flow lines on active connections
 - **Dark/light theme** - Toggle between dark and light modes
-- **Detail panel** - Click any device or client for expanded stats (interfaces, radios, CPU, memory, temperature)
+- **QoE history sparklines** - Zone-colored sparklines (green/amber/red) show per-client QoE score over the last hour, with factor heatmaps (SNR, PHY Rate, Stability, Retransmission, Airtime) and interactive hover detail. Thresholds match SmartOS (Good >= 70, Fair >= 40, Poor < 40)
+- **Detail panel** - Click any device or client for expanded stats (interfaces, radios, CPU, memory, temperature, QoE history)
 - **Time Machine** - Playback bar for historical topology snapshots
 - **Responsive** - Auto-simplifies to compact view when elements would overlap
 
