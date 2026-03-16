@@ -187,10 +187,10 @@ const TOPOLOGY = {
         { id: 'c2', name: 'NAS-Synology', mac: '00:11:32:AB:CD:EF', ip: '192.168.0.10', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN1', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'server', status: 'online', connectedSince: '34d 7h', idle: true },
         { id: 'c18', name: 'Pi-Hole DNS', mac: 'B8:27:EB:11:22:33', ip: '192.168.0.7', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN1', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'server', status: 'online', connectedSince: '34d 7h', idle: true },
         { id: 'c19', name: 'UniFi Switch', mac: 'F0:9F:C2:44:55:66', ip: '192.168.0.8', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN2', rxRate: 1000, txRate: 1000, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
-        { id: 'c20', name: 'Gaming-PC', mac: '70:85:C2:77:88:99', ip: '192.168.0.101', parentId: 'gateway', band: '6 GHz', rssi: -28, rxRate: 5765, txRate: 5765, activity: { down: 78.3, up: 24.1 }, type: 'desktop', status: 'online', connectedSince: '5h 33m', qoeBreakdown: { snr: 98, phyRate: 100, stability: 88 }, wifiVersion: '7' },
+        { id: 'c20', name: 'Gaming-PC', mac: '70:85:C2:77:88:99', ip: '192.168.0.101', parentId: 'gateway', band: '6 GHz', rssi: -28, rxRate: 5765, txRate: 5765, activity: { down: 78.3, up: 24.1 }, type: 'desktop', status: 'online', connectedSince: '5h 33m', qoeBreakdown: { snr: 98, phyRate: 100, stability: 88, retransmission: 92, airtime: 95 }, wifiVersion: '7' },
         { id: 'c21', name: 'Hue Bridge', mac: '00:17:88:AA:BB:CC', ip: '192.168.0.9', parentId: 'gateway', connection: 'ethernet', lanPort: 'LAN2', rxRate: 100, txRate: 100, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
-        { id: 'c71', name: 'Ring Doorbell', mac: '6C:AB:31:11:22:33', ip: '192.168.0.104', parentId: 'gateway', band: '2.4 GHz', rssi: -55, rxRate: 72, txRate: 72, activity: { down: 0.2, up: 0.8 }, type: 'iot', status: 'online', connectedSince: '34d 7h', qoeBreakdown: { snr: 58, phyRate: 40, stability: 72 } },
-        { id: 'c74', name: 'MacBook M4', mac: '3C:22:FB:44:55:66', ip: '192.168.0.107', parentId: 'gateway', band: '6 GHz', rssi: -32, rxRate: 5765, txRate: 5765, activity: { down: 95.2, up: 42.7 }, type: 'laptop', status: 'online', connectedSince: '4h 15m', qoeBreakdown: { snr: 95, phyRate: 100, stability: 98 }, wifiVersion: '7' },
+        { id: 'c71', name: 'Ring Doorbell', mac: '6C:AB:31:11:22:33', ip: '192.168.0.104', parentId: 'gateway', band: '2.4 GHz', rssi: -55, rxRate: 72, txRate: 72, activity: { down: 0.2, up: 0.8 }, type: 'iot', status: 'online', connectedSince: '34d 7h', qoeBreakdown: { snr: 58, phyRate: 40, stability: 72, retransmission: 35, airtime: 48 } },
+        { id: 'c74', name: 'MacBook M4', mac: '3C:22:FB:44:55:66', ip: '192.168.0.107', parentId: 'gateway', band: '6 GHz', rssi: -32, rxRate: 5765, txRate: 5765, activity: { down: 95.2, up: 42.7 }, type: 'laptop', status: 'online', connectedSince: '4h 15m', qoeBreakdown: { snr: 95, phyRate: 100, stability: 98, retransmission: 97, airtime: 90 }, wifiVersion: '7' },
 
         // Kitchen satellite clients (hop 1)
         { id: 'c22', name: 'Shield TV Pro', mac: '00:04:4B:DD:EE:FF', ip: '192.168.0.102', parentId: 'sat-kitchen', band: '5 GHz', rssi: -36, rxRate: 2882, txRate: 2882, activity: { down: 35.1, up: 0.8 }, type: 'streaming', status: 'online', connectedSince: '1d 8h', wifiVersion: '7' },
@@ -199,7 +199,7 @@ const TOPOLOGY = {
         { id: 'c11', name: 'HP LaserJet', mac: '30:E1:71:11:22:33', ip: '192.168.0.142', parentId: 'sat-kitchen', band: '2.4 GHz', rssi: -49, rxRate: 72, txRate: 72, activity: { down: 1.8, up: 3.2 }, type: 'printer', status: 'online', connectedSince: '34d 7h', idle: true },
 
         // Dining satellite clients (hop 2, via kitchen)
-        { id: 'c9', name: 'MacBook-Pro', mac: '3C:22:FB:AA:BB:CC', ip: '192.168.0.140', parentId: 'sat-dining', band: '6 GHz', rssi: -29, rxRate: 2402, txRate: 2402, activity: { down: 34.6, up: 22.8 }, type: 'laptop', status: 'online', connectedSince: '8h 44m', qoeBreakdown: { snr: 100, phyRate: 100, stability: 100 } },
+        { id: 'c9', name: 'MacBook-Pro', mac: '3C:22:FB:AA:BB:CC', ip: '192.168.0.140', parentId: 'sat-dining', band: '6 GHz', rssi: -29, rxRate: 2402, txRate: 2402, activity: { down: 34.6, up: 22.8 }, type: 'laptop', status: 'online', connectedSince: '8h 44m', qoeBreakdown: { snr: 100, phyRate: 100, stability: 100, retransmission: 100, airtime: 98 } },
         { id: 'c12', name: "Sarah's iPhone", mac: 'E4:42:A6:44:55:66', ip: '192.168.0.143', parentId: 'sat-dining', band: '5 GHz', rssi: -41, rxRate: 573, txRate: 573, activity: { down: 8.2, up: 4.1 }, type: 'phone', status: 'online', connectedSince: '4h 38m' },
         { id: 'c17', name: 'Sonos One', mac: '48:A6:B8:EE:FF:00', ip: '192.168.0.146', parentId: 'sat-dining', band: '2.4 GHz', rssi: -54, rxRate: 65, txRate: 65, activity: { down: 0, up: 0 }, type: 'speaker', status: 'online', connectedSince: '14d 2h', idle: true },
         { id: 'c40', name: 'Brother Printer', mac: '00:80:77:77:88:99', ip: '192.168.0.149', parentId: 'sat-dining', band: '2.4 GHz', rssi: -52, rxRate: 72, txRate: 72, activity: { down: 0, up: 0 }, type: 'printer', status: 'online', connectedSince: '34d 7h', idle: true },
@@ -208,7 +208,7 @@ const TOPOLOGY = {
         { id: 'c3', name: 'LG-OLED-TV', mac: 'A8:23:FE:11:22:33', ip: '192.168.0.110', parentId: 'sat-living', band: '5 GHz', rssi: -30, rxRate: 2882, txRate: 2882, activity: { down: 52.3, up: 1.2 }, type: 'tv', status: 'online', connectedSince: '6h 42m', wifiVersion: '7' },
         { id: 'c4', name: "Chad's iPhone 16", mac: 'BC:D0:74:AA:BB:CC', ip: '192.168.0.111', parentId: 'sat-living', band: '6 GHz', rssi: -34, rxRate: 5765, txRate: 5765, activity: { down: 14.8, up: 8.2 }, type: 'phone', status: 'online', connectedSince: '1d 3h', wifiVersion: '7' },
         { id: 'c5', name: 'HomePod Mini', mac: 'F0:B3:EC:DD:EE:FF', ip: '192.168.0.112', parentId: 'sat-living', band: '2.4 GHz', rssi: -52, rxRate: 72, txRate: 72, activity: { down: 0, up: 0 }, type: 'speaker', status: 'online', connectedSince: '12d 8h', idle: true },
-        { id: 'c6', name: 'PS5', mac: 'A4:FC:77:11:22:33', ip: '192.168.0.113', parentId: 'sat-living', band: '6 GHz', rssi: -30, rxRate: 5765, txRate: 5765, activity: { down: 62.4, up: 14.1 }, type: 'console', status: 'online', connectedSince: '3h 17m', qoeBreakdown: { snr: 95, phyRate: 100, stability: 95 }, wifiVersion: '7' },
+        { id: 'c6', name: 'PS5', mac: 'A4:FC:77:11:22:33', ip: '192.168.0.113', parentId: 'sat-living', band: '6 GHz', rssi: -30, rxRate: 5765, txRate: 5765, activity: { down: 62.4, up: 14.1 }, type: 'console', status: 'online', connectedSince: '3h 17m', qoeBreakdown: { snr: 95, phyRate: 100, stability: 95, retransmission: 96, airtime: 88 }, wifiVersion: '7' },
         { id: 'c7', name: 'Ring Doorbell', mac: '6C:56:97:44:55:66', ip: '192.168.0.114', parentId: 'sat-living', band: '2.4 GHz', rssi: -61, rxRate: 54, txRate: 54, activity: { down: 0, up: 0 }, type: 'camera', status: 'online', connectedSince: '34d 7h', idle: true },
         { id: 'c14', name: 'iPad Pro M4', mac: 'DC:A9:04:88:99:AA', ip: '192.168.0.116', parentId: 'sat-living', band: '6 GHz', rssi: -32, rxRate: 5765, txRate: 5765, activity: { down: 12.1, up: 4.3 }, type: 'tablet', status: 'online', connectedSince: '5h 11m', wifiVersion: '7' },
         { id: 'c24', name: 'Samsung Frame', mac: '8C:79:F5:44:55:66', ip: '192.168.0.118', parentId: 'sat-living', band: '5 GHz', rssi: -42, rxRate: 573, txRate: 573, activity: { down: 28.4, up: 0.6 }, type: 'tv', status: 'online', connectedSince: '12h 4m' },
@@ -217,7 +217,7 @@ const TOPOLOGY = {
         { id: 'c36', name: 'Fire Stick 4K', mac: '34:D2:70:AA:BB:CC', ip: '192.168.0.130', parentId: 'sat-living', band: '5 GHz', rssi: -36, rxRate: 2882, txRate: 2882, activity: { down: 22.1, up: 0.4 }, type: 'streaming', status: 'online', connectedSince: '4h 15m', wifiVersion: '7' },
 
         // Upstairs satellite clients (hop 2, via livingroom — Wi-Fi 7 SDG-8733A)
-        { id: 'c46', name: 'Office iMac', mac: '3C:07:54:AA:BB:CC', ip: '192.168.0.155', parentId: 'sat-upstairs', band: '6 GHz', rssi: -30, rxRate: 5765, txRate: 5765, activity: { down: 82.4, up: 36.8 }, type: 'desktop', status: 'online', connectedSince: '1d 2h', qoeBreakdown: { snr: 95, phyRate: 100, stability: 92 }, wifiVersion: '7' },
+        { id: 'c46', name: 'Office iMac', mac: '3C:07:54:AA:BB:CC', ip: '192.168.0.155', parentId: 'sat-upstairs', band: '6 GHz', rssi: -30, rxRate: 5765, txRate: 5765, activity: { down: 82.4, up: 36.8 }, type: 'desktop', status: 'online', connectedSince: '1d 2h', qoeBreakdown: { snr: 95, phyRate: 100, stability: 92, retransmission: 94, airtime: 91 }, wifiVersion: '7' },
         { id: 'c41', name: 'ThinkPad X1', mac: '54:E1:AD:AA:BB:CC', ip: '192.168.0.150', parentId: 'sat-upstairs', band: '6 GHz', rssi: -36, rxRate: 2882, txRate: 2882, activity: { down: 44.1, up: 22.3 }, type: 'laptop', status: 'online', connectedSince: '7h 15m', wifiVersion: '7' },
         { id: 'c43', name: "Tom's Pixel 9", mac: 'DC:E5:5B:11:22:33', ip: '192.168.0.152', parentId: 'sat-upstairs', band: '6 GHz', rssi: -40, rxRate: 2882, txRate: 2882, activity: { down: 12.4, up: 5.8 }, type: 'phone', status: 'online', connectedSince: '2h 55m', wifiVersion: '7' },
         { id: 'c49', name: 'Nest Protect', mac: '18:B4:30:44:55:66', ip: '192.168.0.158', parentId: 'sat-upstairs', band: '2.4 GHz', rssi: -62, rxRate: 54, txRate: 54, activity: { down: 0, up: 0 }, type: 'iot', status: 'online', connectedSince: '34d 7h', idle: true },
@@ -352,17 +352,297 @@ function computeQoE(device) {
 }
 
 function qoeColor(score) {
-    if (score >= 80) return 'var(--accent-green)';
-    if (score >= 60) return 'var(--accent-amber)';
+    if (score >= 70) return 'var(--accent-green)';
+    if (score >= 40) return 'var(--accent-amber)';
     return 'var(--accent-red)';
 }
 
 function qoeLabel(score) {
-    if (score >= 90) return 'Excellent';
-    if (score >= 75) return 'Good';
-    if (score >= 60) return 'Fair';
-    if (score >= 40) return 'Poor';
+    if (score >= 85) return 'Excellent';
+    if (score >= 70) return 'Good';
+    if (score >= 40) return 'Fair';
+    if (score >= 20) return 'Poor';
     return 'Critical';
+}
+
+// ── QoE History (mock, structured for future netdata replacement) ──
+const qoeHistories = {};
+
+function generateQoEHistory(device) {
+    if (qoeHistories[device.id]) return qoeHistories[device.id];
+
+    const currentQoe = computeQoE(device);
+    const points = 60; // 1 per minute, last hour
+    const scores = [];
+    let val = currentQoe;
+
+    // Walk backwards from "now", creating a plausible wander
+    for (let i = 0; i < points; i++) {
+        scores.unshift(Math.max(0, Math.min(100, Math.round(val))));
+        // Random walk biased toward current score
+        val += (Math.random() - 0.5) * 8;
+        val += (currentQoe - val) * 0.08; // mean-revert
+    }
+    // Ensure last point matches current score
+    scores[points - 1] = currentQoe;
+
+    // Generate timestamps (1 per minute, ending at "now")
+    const now = Math.floor(Date.now() / 1000);
+    const timestamps = [];
+    for (let i = 0; i < points; i++) {
+        timestamps.push(now - (points - 1 - i) * 60);
+    }
+
+    const history = { scores, timestamps };
+
+    // Factor histories if breakdown exists
+    if (device.qoeBreakdown) {
+        history.factors = {};
+        for (const [key, current] of Object.entries(device.qoeBreakdown)) {
+            const fScores = [];
+            let fv = current;
+            for (let i = 0; i < points; i++) {
+                fScores.unshift(Math.max(0, Math.min(100, Math.round(fv))));
+                fv += (Math.random() - 0.5) * 6;
+                fv += (current - fv) * 0.1;
+            }
+            fScores[points - 1] = current;
+            history.factors[key] = fScores;
+        }
+    }
+
+    qoeHistories[device.id] = history;
+    return history;
+}
+
+// Zone index for a QoE value: 0=good, 1=fair, 2=poor
+function qoeZone(v) {
+    if (v == null) return 2;
+    if (v >= 70) return 0;
+    if (v >= 40) return 1;
+    return 2;
+}
+
+const QOE_ZONE_COLORS = [
+    { stroke: 'rgba(45, 206, 137, 1)',  fill: 'rgba(45, 206, 137, 0.18)' },  // good
+    { stroke: 'rgba(251, 175, 64, 1)',  fill: 'rgba(251, 175, 64, 0.18)' },  // fair
+    { stroke: 'rgba(255, 69, 58, 1)',   fill: 'rgba(255, 69, 58, 0.18)' },   // poor
+];
+
+const QOE_HEATMAP_FILLS = [
+    'rgba(45, 206, 137, 0.5)',   // good
+    'rgba(251, 175, 64, 0.55)',  // fair
+    'rgba(255, 69, 58, 0.55)',   // poor
+];
+
+/**
+ * Render a QoE sparkline as an SVG string.
+ * @param {object} history - { scores: number[], factors?: { snr, phyRate, stability } }
+ * @param {number} width - SVG viewBox width
+ * @param {number} height - SVG viewBox height (sparkline area; heatmap adds below)
+ * @param {object} opts - { showThresholds, showHeatmap, showTimeLabels }
+ */
+function renderQoESparklineSVG(history, width, height, opts = {}) {
+    const { showThresholds = true, showHeatmap = false, showTimeLabels = false } = opts;
+    const scores = history.scores || [];
+    if (scores.length < 2) return '';
+
+    const pad = 4;
+    const hmRowH = 3, hmGap = 1, hmMargin = 3;
+    const factorKeys = ['snr', 'phyRate', 'stability', 'retransmission', 'airtime'];
+    const factorLabels = ['SNR', 'PHY', 'Stab', 'Ret', 'Air'];
+    const hasFactors = showHeatmap && history.factors && Object.keys(history.factors).length > 0;
+    const hmHeight = hasFactors ? (hmRowH * factorKeys.length + hmGap * (factorKeys.length - 1) + hmMargin) : 0;
+    const totalH = height + hmHeight + (showTimeLabels ? 10 : 0);
+
+    const yFor = (v) => pad + (1 - v / 100) * (height - pad * 2);
+    const xFor = (i) => pad + (i / (scores.length - 1)) * (width - pad * 2);
+
+    let svg = `<svg class="qoe-sparkline-svg" viewBox="0 0 ${width} ${totalH}" preserveAspectRatio="none" width="100%" height="100%">`;
+
+    // Threshold lines
+    if (showThresholds) {
+        [70, 40].forEach(t => {
+            const ty = yFor(t);
+            svg += `<line x1="${pad}" y1="${ty}" x2="${width - pad}" y2="${ty}" stroke="rgba(255,255,255,0.12)" stroke-dasharray="3,2" stroke-width="0.5"/>`;
+        });
+    }
+
+    // Build zone-colored segments (mirroring JUCI flush_run approach)
+    let runStart = 0;
+    let curZone = qoeZone(scores[0]);
+
+    const flushRun = (start, end, zone) => {
+        const colors = QOE_ZONE_COLORS[zone];
+        // Filled area
+        let fillPath = `M${xFor(start)},${height - pad}`;
+        for (let j = start; j <= end; j++) fillPath += ` L${xFor(j)},${yFor(scores[j])}`;
+        fillPath += ` L${xFor(end)},${height - pad}Z`;
+        svg += `<path d="${fillPath}" fill="${colors.fill}" stroke="none"/>`;
+        // Stroke line
+        let linePath = `M${xFor(start)},${yFor(scores[start])}`;
+        for (let j = start + 1; j <= end; j++) linePath += ` L${xFor(j)},${yFor(scores[j])}`;
+        svg += `<path d="${linePath}" fill="none" stroke="${colors.stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+    };
+
+    for (let i = 1; i < scores.length; i++) {
+        const z = qoeZone(scores[i]);
+        if (z !== curZone) {
+            flushRun(runStart, i, curZone);
+            runStart = i - 1; // overlap by 1 for continuity
+            curZone = z;
+        }
+    }
+    flushRun(runStart, scores.length - 1, curZone);
+
+    // Factor heatmap
+    if (hasFactors) {
+        const hmY0 = height + hmMargin;
+        factorKeys.forEach((key, row) => {
+            const fdata = history.factors[key];
+            if (!fdata) return;
+            const ry = hmY0 + row * (hmRowH + hmGap);
+            const step = (width - pad * 2) / scores.length;
+            for (let i = 0; i < fdata.length; i++) {
+                svg += `<rect x="${pad + i * step}" y="${ry}" width="${step + 0.5}" height="${hmRowH}" fill="${QOE_HEATMAP_FILLS[qoeZone(fdata[i])]}" rx="0.5"/>`;
+            }
+        });
+        // Factor labels (tiny, left-aligned)
+        factorKeys.forEach((key, row) => {
+            if (!history.factors[key]) return;
+            const ry = hmY0 + row * (hmRowH + hmGap) + hmRowH - 0.5;
+            svg += `<text x="${pad + 1}" y="${ry}" fill="rgba(255,255,255,0.4)" font-size="2.5" font-family="var(--font-mono, monospace)">${factorLabels[row]}</text>`;
+        });
+    }
+
+    // Time labels
+    if (showTimeLabels) {
+        const labelY = totalH - 1;
+        svg += `<text x="${pad}" y="${labelY}" fill="rgba(255,255,255,0.35)" font-size="3" font-family="var(--font-mono, monospace)">60m ago</text>`;
+        svg += `<text x="${width - pad}" y="${labelY}" fill="rgba(255,255,255,0.35)" font-size="3" font-family="var(--font-mono, monospace)" text-anchor="end">now</text>`;
+    }
+
+    svg += '</svg>';
+    return svg;
+}
+
+// ── Detail Sparkline Hover ────────────────────────
+function bindDetailSparklineHover(device) {
+    const container = document.querySelector(`.detail-qoe-sparkline[data-device-id="${device.id}"]`);
+    if (!container) return;
+
+    const svg = container.querySelector('.qoe-sparkline-svg');
+    const hoverLine = container.querySelector('.qoe-hover-line');
+    const hoverDot = container.querySelector('.qoe-hover-dot');
+    const hoverTip = container.querySelector('.qoe-hover-tooltip');
+    if (!svg || !hoverLine || !hoverDot || !hoverTip) return;
+
+    const history = qoeHistories[device.id];
+    if (!history || !history.scores || history.scores.length < 2) return;
+
+    const scores = history.scores;
+    const timestamps = history.timestamps;
+    const factors = history.factors;
+    const hasFactors = factors && Object.keys(factors).length > 0;
+    const pad = 4;
+
+    // Factor labels matching the sparkline renderer keys
+    const factorDefs = [
+        { key: 'snr', abbr: 'SNR' },
+        { key: 'phyRate', abbr: 'PHY' },
+        { key: 'stability', abbr: 'Stab' },
+        { key: 'retransmission', abbr: 'Ret' },
+        { key: 'airtime', abbr: 'Air' },
+    ];
+
+    container.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const w = rect.width;
+
+        // Calculate data index from mouse position
+        const ratio = (mx - pad) / (w - pad * 2);
+        const idx = Math.max(0, Math.min(scores.length - 1, Math.round(ratio * (scores.length - 1))));
+        const score = scores[idx];
+        if (score == null) return;
+
+        // X/Y position as percentage of container for absolute positioning
+        const xPct = (pad + (idx / (scores.length - 1)) * (w - pad * 2)) / w * 100;
+        // SVG viewBox: height 64, pad 4, so yFor = pad + (1 - score/100) * (height - pad*2)
+        const svgH = 64; // matches renderQoESparklineSVG height param
+        const yNorm = pad + (1 - score / 100) * (svgH - pad * 2);
+        const yPct = yNorm / svg.getBoundingClientRect().height * svg.getBoundingClientRect().height;
+
+        // Position elements using px from container
+        const xPx = (xPct / 100) * rect.width;
+        const containerRect = container.getBoundingClientRect();
+        const sparkH = rect.height;
+        // The SVG has viewBox height = totalH (64 + heatmap + time labels)
+        // We need the sparkline portion only (first 64 units of the viewBox)
+        const viewBoxH = parseFloat(svg.getAttribute('viewBox').split(' ')[3]);
+        const yPx = (yNorm / viewBoxH) * sparkH;
+
+        // Zone color
+        const zoneColors = ['rgba(45,206,137,1)', 'rgba(251,175,64,1)', 'rgba(255,69,58,1)'];
+        const zone = qoeZone(score);
+        const dotColor = zoneColors[zone];
+
+        // Show vertical line
+        hoverLine.style.display = 'block';
+        hoverLine.style.left = xPx + 'px';
+        hoverLine.style.top = '0';
+        hoverLine.style.height = sparkH + 'px';
+
+        // Show dot
+        hoverDot.style.display = 'block';
+        hoverDot.style.left = (xPx - 4) + 'px';
+        hoverDot.style.top = (yPx - 4) + 'px';
+        hoverDot.style.background = dotColor;
+        hoverDot.style.boxShadow = `0 0 4px ${dotColor}`;
+
+        // Format time
+        const ts = timestamps ? timestamps[idx] : null;
+        let timeStr = '';
+        if (ts) {
+            const d = new Date(ts * 1000);
+            timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+        }
+
+        // Build tooltip content
+        let tipHtml = `<span class="qoe-ht-score" style="color:${dotColor}">${score}</span>`;
+        if (timeStr) tipHtml += `<span class="qoe-ht-time">${timeStr}</span>`;
+
+        if (hasFactors) {
+            tipHtml += '<span class="qoe-ht-factors">';
+            factorDefs.forEach(f => {
+                const fv = factors[f.key]?.[idx];
+                if (fv != null) {
+                    const fc = zoneColors[qoeZone(fv)];
+                    tipHtml += `<span class="qoe-ht-factor"><span class="qoe-ht-flabel">${f.abbr}</span><span style="color:${fc}">${fv}</span></span>`;
+                }
+            });
+            tipHtml += '</span>';
+        }
+
+        hoverTip.innerHTML = tipHtml;
+        hoverTip.style.display = 'flex';
+
+        // Position tooltip: to the right of the dot, or left if near right edge
+        const tipW = hoverTip.offsetWidth;
+        const containerW = containerRect.width;
+        if (xPx + 12 + tipW > containerW) {
+            hoverTip.style.left = (xPx - tipW - 8) + 'px';
+        } else {
+            hoverTip.style.left = (xPx + 12) + 'px';
+        }
+        hoverTip.style.top = Math.max(0, yPx - hoverTip.offsetHeight / 2) + 'px';
+    });
+
+    container.addEventListener('mouseleave', () => {
+        hoverLine.style.display = 'none';
+        hoverDot.style.display = 'none';
+        hoverTip.style.display = 'none';
+    });
 }
 
 // ── State ──────────────────────────────────────────
@@ -1204,12 +1484,17 @@ function showClientTooltip(device, pillEl) {
                 <span class="tt-band-badge" style="border-color:${bandColor};color:${bandColor}">${isWired ? 'Ethernet' : (getWifiGen(device) ? `Wi-Fi ${getWifiGen(device)}` : band)}</span>
             </div>
             ${device.qoeBreakdown ? `<div class="tt-qoe-breakdown">
-                ${['SNR', 'PHY', 'Stab'].map((label, i) => {
-                    const val = [device.qoeBreakdown.snr, device.qoeBreakdown.phyRate, device.qoeBreakdown.stability][i];
-                    const c = val >= 80 ? 'var(--accent-green)' : val >= 50 ? 'var(--accent-amber)' : 'var(--accent-red)';
+                ${['SNR', 'PHY', 'Stab', 'Ret', 'Air'].map((label, i) => {
+                    const val = [device.qoeBreakdown.snr, device.qoeBreakdown.phyRate, device.qoeBreakdown.stability, device.qoeBreakdown.retransmission, device.qoeBreakdown.airtime][i];
+                    if (val == null) return '';
+                    const c = val >= 70 ? 'var(--accent-green)' : val >= 40 ? 'var(--accent-amber)' : 'var(--accent-red)';
                     return `<div class="tt-bar-item"><span class="tt-bar-label">${label}</span><span class="tt-bar-track"><span class="tt-bar-fill" style="width:${val}%;background:${c}"></span></span><span class="tt-bar-val" style="color:${c}">${val}</span></div>`;
                 }).join('')}
             </div>` : ''}
+            <div class="tt-qoe-sparkline">
+                <span class="tt-qoe-sparkline-label">QoE · 1hr</span>
+                ${renderQoESparklineSVG(generateQoEHistory(device), 200, 32, { showThresholds: true, showHeatmap: false })}
+            </div>
             <div class="tt-grid">
                 <span class="tt-label">IP</span><span class="tt-value">${device.ip || '—'}</span>
                 <span class="tt-label">MAC</span><span class="tt-value">${device.mac || '—'}</span>
@@ -1741,6 +2026,7 @@ function selectDevice(id) {
     title.textContent = device.name;
     body.innerHTML = renderDeviceDetail(device);
     panel.classList.add('open');
+    bindDetailSparklineHover(device);
 }
 
 function closeDetail() {
@@ -1797,6 +2083,21 @@ function renderDeviceDetail(device) {
         }
         if (device.rxRate) html += `<div class="detail-row"><span class="label">Rx Rate</span><span class="value">${device.rxRate} Mbps</span></div>`;
         if (device.txRate) html += `<div class="detail-row"><span class="label">Tx Rate</span><span class="value">${device.txRate} Mbps</span></div>`;
+        html += '</div>';
+    }
+
+    // QoE History for clients
+    if (device.band || device.connection) {
+        const history = generateQoEHistory(device);
+        const hasFactors = !!device.qoeBreakdown;
+        html += '<div class="detail-section">';
+        html += '<div class="detail-section-title">QoE History <span class="detail-section-sub">Last hour</span></div>';
+        html += `<div class="detail-qoe-sparkline" data-device-id="${device.id}">`;
+        html += renderQoESparklineSVG(history, 260, 64, { showThresholds: true, showHeatmap: hasFactors, showTimeLabels: true });
+        html += '<div class="qoe-hover-tooltip"></div>';
+        html += '<div class="qoe-hover-line"></div>';
+        html += '<div class="qoe-hover-dot"></div>';
+        html += '</div>';
         html += '</div>';
     }
 
@@ -2510,6 +2811,8 @@ function parseTopologyJson(raw) {
                 snr: qoe.SnrScore || 0,
                 phyRate: qoe.PhyRateScore || 0,
                 stability: qoe.StabilityScore || 0,
+                retransmission: qoe.RetransmissionScore || 0,
+                airtime: qoe.AirtimeScore || 0,
             } : undefined,
         });
     });
@@ -2583,6 +2886,8 @@ function parseTopologyJson(raw) {
                 snr: qoe.SnrScore || 0,
                 phyRate: qoe.PhyRateScore || 0,
                 stability: qoe.StabilityScore || 0,
+                retransmission: qoe.RetransmissionScore || 0,
+                airtime: qoe.AirtimeScore || 0,
             };
         }
 
