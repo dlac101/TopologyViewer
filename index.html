@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intellifi Topology</title>
-    <link rel="stylesheet" href="styles.css?v=110">
+    <link rel="stylesheet" href="styles.css?v=117">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
@@ -43,7 +43,7 @@
             </a>
             <a class="nav-item" data-view="time-machine" id="tmNavItem">
                 <i class="ph-duotone ph-clock-clockwise" style="font-size:18px"></i>
-                <span>History</span>
+                <span>Time Machine</span>
             </a>
         </div>
         <div class="sidebar-footer">
@@ -127,6 +127,39 @@
             </div>
         </div>
 
+        <!-- Clients Table View -->
+        <div class="clients-container" id="clientsContainer" style="display:none">
+            <div class="clients-toolbar">
+                <input type="text" class="clients-search" id="clientsSearch" placeholder="Search clients..." list="clientsSearchList" autocomplete="off">
+                <datalist id="clientsSearchList"></datalist>
+                <div class="clients-filters">
+                    <div class="cf-multi" id="clientsStatusFilter" data-label="Status"></div>
+                    <div class="cf-multi" id="clientsTypeFilter" data-label="Type"></div>
+                    <div class="cf-multi" id="clientsParentFilter" data-label="AP"></div>
+                    <div class="cf-multi" id="clientsBandFilter" data-label="Band"></div>
+                    <div class="cf-multi" id="clientsWifiFilter" data-label="Wi-Fi"></div>
+                </div>
+            </div>
+            <div class="clients-table-wrap">
+                <table class="clients-table" id="clientsTable">
+                    <thead>
+                        <tr>
+                            <th data-sort="status" class="col-status"></th>
+                            <th data-sort="name" class="col-name sort-asc">Name</th>
+                            <th data-sort="type" class="col-type">Type</th>
+                            <th data-sort="parent" class="col-parent">Connected To</th>
+                            <th data-sort="band" class="col-band">Band</th>
+                            <th data-sort="qoe" class="col-qoe">QoE</th>
+                            <th data-sort="wifi" class="col-wifi">Wi-Fi</th>
+                            <th data-sort="throughput" class="col-throughput">Throughput</th>
+                            <th data-sort="since" class="col-since">Connected</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientsTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Detail Panel (slide-out) -->
         <aside class="detail-panel" id="detailPanel">
             <div class="detail-header">
@@ -137,6 +170,6 @@
         </aside>
     </main>
 
-    <script src="app.js?v=105"></script>
+    <script src="app.js?v=118"></script>
 </body>
 </html>
