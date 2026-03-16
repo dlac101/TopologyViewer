@@ -1068,10 +1068,11 @@ function createBandGroupEl(groupId, nodeData) {
     pillsContainer.className = 'band-group-pills';
 
     const sorted = [...clients].sort((a, b) => {
-        if (a.idle !== b.idle) return a.idle ? 1 : -1;
-        const aTotal = (a.activity?.down || 0) + (a.activity?.up || 0);
-        const bTotal = (b.activity?.down || 0) + (b.activity?.up || 0);
-        return bTotal - aTotal;
+        // Priority: active online > idle online > offline
+        const aOff = a.status === 'offline' ? 2 : (a.idle ? 1 : 0);
+        const bOff = b.status === 'offline' ? 2 : (b.idle ? 1 : 0);
+        if (aOff !== bOff) return aOff - bOff;
+        return (a.name || '').localeCompare(b.name || '');
     });
 
     sorted.forEach(client => {
@@ -1396,7 +1397,8 @@ function createClientPill(device) {
     node.dataset.id = device.id;
 
     const pill = document.createElement('div');
-    pill.className = 'client-pill' + (device.idle ? ' idle' : '');
+    const pillState = device.status === 'offline' ? ' offline' : (device.idle ? ' idle' : '');
+    pill.className = 'client-pill' + pillState;
 
     // RSSI-based border color
     pill.style.borderColor = getRssiColor(device);
@@ -1404,9 +1406,14 @@ function createClientPill(device) {
     // Icon + name
     const iconType = device.type || 'iot';
     const iconHtml = ICONS[iconType] || ICONS.iot;
-    const wifiGen = getWifiGen(device);
-    const wifiBadge = wifiGen ? `<span class="pill-wifi-badge wifi-${wifiGen.toLowerCase()}"><span class="pill-wifi-prefix">Wi-Fi </span>${wifiGen}</span>` : '';
-    pill.innerHTML = `<span class="pill-icon">${iconHtml}</span><span class="pill-name">${device.name}</span>${wifiBadge}`;
+    let badge;
+    if (device.status === 'offline') {
+        badge = `<span class="pill-wifi-badge pill-offline-badge">OFFLINE</span>`;
+    } else {
+        const wifiGen = getWifiGen(device);
+        badge = wifiGen ? `<span class="pill-wifi-badge wifi-${wifiGen.toLowerCase()}"><span class="pill-wifi-prefix">Wi-Fi </span>${wifiGen}</span>` : '';
+    }
+    pill.innerHTML = `<span class="pill-icon">${iconHtml}</span><span class="pill-name">${device.name}</span>${badge}`;
 
     node.appendChild(pill);
 
@@ -1908,6 +1915,7 @@ function startAnimations() {
         updateStats();
         updateConnectionLabels();
         updateClientActivityPulses();
+        if (currentView === 'clients') updateClientsTableThroughput();
     }, 3000);
 }
 
@@ -1919,29 +1927,7 @@ function stopAnimations() {
 }
 
 function updateClientActivityPulses() {
-    TOPOLOGY.clients.forEach(client => {
-        const card = document.querySelector(`.device-node[data-id="${client.id}"] .client-pill`) ||
-                     document.querySelector(`.device-node[data-id="${client.id}"] .device-card`);
-        if (!card) return;
-
-        const down = client.activity?.down || 0;
-        const up = client.activity?.up || 0;
-        const total = down + up;
-
-        // Remove existing activity classes
-        card.classList.remove('activity-idle', 'activity-low', 'activity-medium', 'activity-high');
-
-        // Assign activity level based on total traffic
-        if (total < 0.5) {
-            card.classList.add('activity-idle');
-        } else if (total < 5) {
-            card.classList.add('activity-low');
-        } else if (total < 30) {
-            card.classList.add('activity-medium');
-        } else {
-            card.classList.add('activity-high');
-        }
-    });
+    // Activity pulse animations removed — kept as no-op for call compatibility
 }
 
 function updateConnectionLabels() {
@@ -2039,6 +2025,10 @@ function selectDevice(id) {
     document.querySelectorAll('.device-node').forEach(n => n.classList.remove('selected'));
     const nodeEl = document.querySelector(`.device-node[data-id="${id}"]`);
     if (nodeEl) nodeEl.classList.add('selected');
+    // Also highlight in clients table
+    document.querySelectorAll('.clients-row').forEach(r => r.classList.remove('selected'));
+    const rowEl = document.querySelector(`.clients-row[data-id="${id}"]`);
+    if (rowEl) rowEl.classList.add('selected');
 
     title.textContent = device.name;
     body.innerHTML = renderDeviceDetail(device);
@@ -2373,6 +2363,439 @@ function debounce(fn, delay) {
     };
 }
 
+// ── Clients Table View ────────────────────────────
+let currentView = 'topology';
+let clientsSort = { column: 'name', direction: 'asc' };
+let clientsSearchTerm = '';
+let clientsFilters = {
+    status: new Set(),   // empty = all
+    type: new Set(),
+    parent: new Set(),
+    band: new Set(),
+    wifi: new Set()
+};
+
+function getParentName(parentId) {
+    if (parentId === 'gateway') return TOPOLOGY.gateway.name;
+    const sat = TOPOLOGY.satellites.find(s => s.id === parentId);
+    return sat ? sat.name : parentId;
+}
+
+function getClientStatus(client) {
+    if (client.status === 'offline') return 'offline';
+    if (client.idle) return 'idle';
+    return 'active';
+}
+
+function parseUptime(str) {
+    if (!str || str === '0') return 0;
+    let mins = 0;
+    const d = str.match(/(\d+)d/);
+    const h = str.match(/(\d+)h/);
+    const m = str.match(/(\d+)m/);
+    if (d) mins += parseInt(d[1]) * 1440;
+    if (h) mins += parseInt(h[1]) * 60;
+    if (m) mins += parseInt(m[1]);
+    return mins;
+}
+
+function getFilteredSortedClients() {
+    let list = [...TOPOLOGY.clients];
+
+    // Search filter
+    if (clientsSearchTerm) {
+        const q = clientsSearchTerm.toLowerCase();
+        list = list.filter(c =>
+            (c.name || '').toLowerCase().includes(q) ||
+            (c.mac || '').toLowerCase().includes(q) ||
+            (c.ip || '').toLowerCase().includes(q)
+        );
+    }
+
+    // Status filter
+    if (clientsFilters.status.size) {
+        list = list.filter(c => clientsFilters.status.has(getClientStatus(c)));
+    }
+
+    // Type filter
+    if (clientsFilters.type.size) {
+        list = list.filter(c => clientsFilters.type.has(c.type || ''));
+    }
+
+    // Parent AP filter
+    if (clientsFilters.parent.size) {
+        list = list.filter(c => clientsFilters.parent.has(c.parentId));
+    }
+
+    // Band filter
+    if (clientsFilters.band.size) {
+        list = list.filter(c => {
+            if (clientsFilters.band.has('ethernet') && c.connection === 'ethernet') return true;
+            if (c.connection === 'ethernet') return false;
+            return clientsFilters.band.has(c.band);
+        });
+    }
+
+    // Wi-Fi version filter
+    if (clientsFilters.wifi.size) {
+        list = list.filter(c => {
+            const gen = getWifiGen(c);
+            return gen && clientsFilters.wifi.has(gen.toLowerCase().replace(' ', ''));
+        });
+    }
+
+    // Sort
+    const { column, direction } = clientsSort;
+    const dir = direction === 'asc' ? 1 : -1;
+
+    list.sort((a, b) => {
+        let va, vb;
+        switch (column) {
+            case 'status':
+                const order = { active: 0, idle: 1, offline: 2 };
+                va = order[getClientStatus(a)]; vb = order[getClientStatus(b)];
+                break;
+            case 'name':
+                va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase();
+                return dir * va.localeCompare(vb);
+            case 'type':
+                va = (a.type || '').toLowerCase(); vb = (b.type || '').toLowerCase();
+                return dir * va.localeCompare(vb);
+            case 'parent':
+                va = getParentName(a.parentId).toLowerCase(); vb = getParentName(b.parentId).toLowerCase();
+                return dir * va.localeCompare(vb);
+            case 'band':
+                va = a.connection === 'ethernet' ? 'zzz' : (a.band || '');
+                vb = b.connection === 'ethernet' ? 'zzz' : (b.band || '');
+                return dir * va.localeCompare(vb);
+            case 'qoe':
+                va = computeQoE(a); vb = computeQoE(b);
+                break;
+            case 'wifi':
+                va = getWifiGen(a) || ''; vb = getWifiGen(b) || '';
+                return dir * va.localeCompare(vb);
+            case 'throughput':
+                va = (a.activity?.down || 0) + (a.activity?.up || 0);
+                vb = (b.activity?.down || 0) + (b.activity?.up || 0);
+                break;
+            case 'since':
+                va = parseUptime(a.connectedSince); vb = parseUptime(b.connectedSince);
+                break;
+            default:
+                va = 0; vb = 0;
+        }
+        return dir * (va - vb);
+    });
+
+    return list;
+}
+
+function renderClientsTable() {
+    const tbody = document.getElementById('clientsTableBody');
+    if (!tbody) return;
+
+    const clients = getFilteredSortedClients();
+    if (clients.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="clients-empty">No clients match filters</td></tr>';
+        return;
+    }
+
+    const rows = clients.map(c => {
+        const status = getClientStatus(c);
+        const icon = ICONS[c.type] || ICONS.iot;
+        const parentName = getParentName(c.parentId);
+        const isWired = c.connection === 'ethernet';
+        const band = isWired ? 'Ethernet' : (c.band || '\u2014');
+        const bandClass = isWired ? 'band-ethernet' :
+            (c.band || '').includes('6') ? 'band-6ghz' :
+            (c.band || '').includes('2.4') ? 'band-2-4ghz' : 'band-5ghz';
+        const bandBadge = band !== '\u2014' ? `<span class="cl-badge ${bandClass}">${band}</span>` : '\u2014';
+        const qoe = computeQoE(c);
+        const qColor = qoeColor(qoe);
+        const qLabel = qoeLabel(qoe);
+        const wifi = getWifiGen(c);
+        const wifiClass = wifi ? `wifi-${wifi.toLowerCase().replace(' ', '')}` : '';
+        const wifiBadge = wifi ? `<span class="cl-badge ${wifiClass}">Wi-Fi ${wifi}</span>` : '\u2014';
+        const typeClass = `type-${c.type || 'default'}`;
+        const typeBadge = c.type ? `<span class="cl-badge ${typeClass}">${c.type}</span>` : '\u2014';
+        const down = formatBandwidth(c.activity?.down || 0);
+        const up = formatBandwidth(c.activity?.up || 0);
+        const since = c.connectedSince || '\u2014';
+        const sel = c.id === selectedDeviceId ? ' selected' : '';
+
+        return `<tr class="clients-row${sel}" data-id="${c.id}">
+            <td class="col-status"><span class="cl-status-dot st-${status}"></span></td>
+            <td class="col-name"><span class="cl-icon">${icon}</span>${c.name}</td>
+            <td class="col-type">${typeBadge}</td>
+            <td class="col-parent">${parentName}</td>
+            <td class="col-band">${bandBadge}</td>
+            <td class="col-qoe" style="color:${qColor}">${qoe} <span style="opacity:0.6;font-size:10px">${qLabel}</span></td>
+            <td class="col-wifi">${wifiBadge}</td>
+            <td class="col-throughput"><span class="cl-throughput-down">\u2193${down}</span><span class="cl-throughput-up">\u2191${up}</span></td>
+            <td class="col-since">${since}</td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = rows.join('');
+}
+
+function updateClientsTableThroughput() {
+    const tbody = document.getElementById('clientsTableBody');
+    if (!tbody) return;
+    tbody.querySelectorAll('.clients-row').forEach(row => {
+        const id = row.dataset.id;
+        const client = TOPOLOGY.clients.find(c => c.id === id);
+        if (!client) return;
+        const td = row.querySelector('.col-throughput');
+        if (td) {
+            const down = formatBandwidth(client.activity?.down || 0);
+            const up = formatBandwidth(client.activity?.up || 0);
+            td.innerHTML = `<span class="cl-throughput-down">\u2193${down}</span><span class="cl-throughput-up">\u2191${up}</span>`;
+        }
+    });
+}
+
+function switchView(viewName) {
+    // If leaving Time Machine via Map click
+    if (timeMachineActive && viewName !== 'time-machine') {
+        deactivateTimeMachine();
+        // Update nav active states
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        const navItem = document.querySelector(`.nav-item[data-view="${viewName}"]`);
+        if (navItem) navItem.classList.add('active');
+        if (viewName === currentView) return;
+    }
+
+    if (viewName === currentView) return;
+
+    // If entering Time Machine from another view
+    if (viewName === 'time-machine') {
+        if (currentView === 'clients') {
+            document.getElementById('clientsContainer').style.display = 'none';
+            document.getElementById('topologyContainer').style.display = '';
+            const heading = document.querySelector('.top-bar-left h1');
+            if (heading) heading.textContent = 'Network Topology';
+            currentView = 'topology';
+        }
+        // Update nav active states
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.getElementById('tmNavItem')?.classList.add('active');
+        activateTimeMachine();
+        return;
+    }
+
+    const topoContainer = document.getElementById('topologyContainer');
+    const clientsContainer = document.getElementById('clientsContainer');
+    const heading = document.querySelector('.top-bar-left h1');
+
+    if (viewName === 'topology') {
+        topoContainer.style.display = '';
+        clientsContainer.style.display = 'none';
+        if (heading) heading.textContent = 'Network Topology';
+    } else if (viewName === 'clients') {
+        topoContainer.style.display = 'none';
+        clientsContainer.style.display = '';
+        if (heading) heading.textContent = 'Client Devices';
+        renderClientsTable();
+    }
+
+    // Update nav active states
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-view="${viewName}"]`);
+    if (navItem) navItem.classList.add('active');
+
+    currentView = viewName;
+}
+
+// ── Multi-select filter widget ─────────────────────
+function initMultiFilter(containerId, filterKey, options) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const label = container.dataset.label;
+
+    // Build button + menu
+    const btn = document.createElement('div');
+    btn.className = 'cf-multi-btn';
+    btn.textContent = `All ${label}`;
+
+    const menu = document.createElement('div');
+    menu.className = 'cf-multi-menu';
+
+    // Clear link at top of menu
+    const clearRow = document.createElement('div');
+    clearRow.className = 'cf-multi-clear';
+    clearRow.textContent = 'Clear';
+    clearRow.style.display = 'none';
+    menu.appendChild(clearRow);
+
+    options.forEach(opt => {
+        const item = document.createElement('label');
+        item.className = 'cf-multi-item';
+        item.innerHTML = `<input type="checkbox" value="${opt.value}"> ${opt.text}`;
+        menu.appendChild(item);
+    });
+
+    container.appendChild(btn);
+    container.appendChild(menu);
+
+    function updateClearVisibility() {
+        clearRow.style.display = clientsFilters[filterKey].size > 0 ? '' : 'none';
+    }
+
+    clearRow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clientsFilters[filterKey].clear();
+        menu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.checked = false;
+            cb.closest('.cf-multi-item').classList.remove('checked');
+        });
+        btn.innerHTML = `All ${label}`;
+        updateClearVisibility();
+        renderClientsTable();
+    });
+
+    // Toggle open/close
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close other open menus
+        document.querySelectorAll('.cf-multi.open').forEach(m => {
+            if (m !== container) m.classList.remove('open');
+        });
+        container.classList.toggle('open');
+    });
+
+    // Checkbox changes
+    menu.addEventListener('change', (e) => {
+        const cb = e.target;
+        if (cb.type !== 'checkbox') return;
+        const filterSet = clientsFilters[filterKey];
+        if (cb.checked) {
+            filterSet.add(cb.value);
+        } else {
+            filterSet.delete(cb.value);
+        }
+        cb.closest('.cf-multi-item').classList.toggle('checked', cb.checked);
+        // Update button label
+        if (filterSet.size === 0) {
+            btn.innerHTML = `All ${label}`;
+        } else if (filterSet.size === 1) {
+            const sel = options.find(o => filterSet.has(o.value));
+            btn.innerHTML = `${sel ? sel.text : label} <span class="cf-count">1</span>`;
+        } else {
+            btn.innerHTML = `${label} <span class="cf-count">${filterSet.size}</span>`;
+        }
+        updateClearVisibility();
+        renderClientsTable();
+    });
+
+    // Prevent menu click from closing
+    menu.addEventListener('click', (e) => e.stopPropagation());
+}
+
+function populateClientFilterOptions() {
+    const clients = TOPOLOGY.clients;
+
+    // Status
+    initMultiFilter('clientsStatusFilter', 'status', [
+        { value: 'active', text: 'Active' },
+        { value: 'idle', text: 'Idle' },
+        { value: 'offline', text: 'Offline' }
+    ]);
+
+    // Type
+    const types = [...new Set(clients.map(c => c.type).filter(Boolean))].sort();
+    initMultiFilter('clientsTypeFilter', 'type',
+        types.map(t => ({ value: t, text: t.charAt(0).toUpperCase() + t.slice(1) }))
+    );
+
+    // Parent AP
+    const parentIds = [...new Set(clients.map(c => c.parentId).filter(Boolean))];
+    const parents = parentIds.map(id => ({ id, name: getParentName(id) })).sort((a, b) => a.name.localeCompare(b.name));
+    initMultiFilter('clientsParentFilter', 'parent',
+        parents.map(p => ({ value: p.id, text: p.name }))
+    );
+
+    // Band
+    initMultiFilter('clientsBandFilter', 'band', [
+        { value: '2.4 GHz', text: '2.4 GHz' },
+        { value: '5 GHz', text: '5 GHz' },
+        { value: '6 GHz', text: '6 GHz' },
+        { value: 'ethernet', text: 'Ethernet' }
+    ]);
+
+    // Wi-Fi version
+    const gens = [...new Set(clients.map(c => getWifiGen(c)).filter(Boolean))];
+    const order = ['7', '6E', '6', '5', '4'];
+    gens.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    initMultiFilter('clientsWifiFilter', 'wifi',
+        gens.map(g => ({ value: g.toLowerCase().replace(' ', ''), text: `Wi-Fi ${g}` }))
+    );
+
+    // Search autocomplete datalist
+    const datalist = document.getElementById('clientsSearchList');
+    if (datalist) {
+        const names = [...new Set(clients.map(c => c.name).filter(Boolean))].sort();
+        datalist.innerHTML = names.map(n => `<option value="${n}">`).join('');
+    }
+}
+
+function bindClientsEvents() {
+    // Nav item clicks for Map and Clients
+    document.querySelectorAll('.nav-item').forEach(item => {
+        const view = item.dataset.view;
+        if (view === 'time-machine') return; // handled separately
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchView(view);
+        });
+    });
+
+    // Column header sort
+    document.querySelectorAll('.clients-table th[data-sort]').forEach(th => {
+        th.addEventListener('click', () => {
+            const col = th.dataset.sort;
+            if (clientsSort.column === col) {
+                clientsSort.direction = clientsSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                clientsSort.column = col;
+                clientsSort.direction = 'asc';
+            }
+            // Update sort indicators
+            document.querySelectorAll('.clients-table th').forEach(h => {
+                h.classList.remove('sort-asc', 'sort-desc');
+            });
+            th.classList.add(clientsSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+            renderClientsTable();
+        });
+    });
+
+    // Search with autocomplete
+    const searchEl = document.getElementById('clientsSearch');
+    if (searchEl) {
+        searchEl.addEventListener('input', debounce(() => {
+            clientsSearchTerm = searchEl.value.trim();
+            renderClientsTable();
+        }, 200));
+    }
+
+    // Populate multi-select filters and datalist
+    populateClientFilterOptions();
+
+    // Close filter menus on outside click
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.cf-multi.open').forEach(m => m.classList.remove('open'));
+    });
+
+    // Row click delegation
+    const tbody = document.getElementById('clientsTableBody');
+    if (tbody) {
+        tbody.addEventListener('click', (e) => {
+            const row = e.target.closest('.clients-row');
+            if (row) selectDevice(row.dataset.id);
+        });
+    }
+}
+
 // ── Time Machine ──────────────────────────────────
 let timeMachineActive = false;
 let tmSnapshots = [];          // array of full TOPOLOGY snapshots
@@ -2420,29 +2843,109 @@ function generateMockSnapshots() {
             };
         });
 
-        // Random client churn: remove 0-2 clients, add back 0-2 from base pool
-        const churnCount = Math.floor(Math.random() * 3);
-        for (let c = 0; c < churnCount && snap.clients.length > 10; c++) {
-            const idx = Math.floor(Math.random() * snap.clients.length);
-            if (!snap.clients[idx].idle) continue; // only drop idle clients
-            snap.clients.splice(idx, 1);
+        // ── Roaming & topology events ──
+        snap._events = [];
+
+        // Event windows (as fractions of total snapshots)
+        const pct = i / totalSnapshots;
+
+        // 1. Client AP-to-AP roam: Sarah's iPhone roams dining→kitchen (hour 8-9, pct 0.33-0.38)
+        const c12 = snap.clients.find(c => c.id === 'c12');
+        if (c12) {
+            if (pct >= 0.33 && pct < 0.38) {
+                c12.parentId = 'sat-kitchen';
+                c12.rssi = -44;
+                if (pct >= 0.33 && pct < 0.335) snap._events.push({ clientId: 'c12', type: 'roam', detail: 'KITCHEN_AP' });
+            } else if (pct >= 0.38 && pct < 0.385) {
+                snap._events.push({ clientId: 'c12', type: 'roam', detail: 'DINING_AP' });
+            }
         }
 
-        // Satellite offline event: ~hour 10-12 window — upstairs goes offline (3-hop node)
+        // 2. Client AP-to-AP roam: Dad's Phone roams living→kitchen (hour 14-15, pct 0.58-0.63)
+        const c35 = snap.clients.find(c => c.id === 'c35');
+        if (c35) {
+            if (pct >= 0.58 && pct < 0.63) {
+                c35.parentId = 'sat-kitchen';
+                c35.rssi = -48;
+                if (pct >= 0.58 && pct < 0.585) snap._events.push({ clientId: 'c35', type: 'roam', detail: 'KITCHEN_AP' });
+            } else if (pct >= 0.63 && pct < 0.635) {
+                snap._events.push({ clientId: 'c35', type: 'roam', detail: 'LIVING_ROOM_AP' });
+            }
+        }
+
+        // 3. Client band-to-band roam: Shield TV Pro 5GHz→2.4GHz→5GHz on kitchen (hour 6-7, pct 0.25-0.29)
+        const c22 = snap.clients.find(c => c.id === 'c22');
+        if (c22) {
+            if (pct >= 0.25 && pct < 0.29) {
+                c22.band = '2.4 GHz';
+                c22.rssi = -50;
+                c22.rxRate = 72; c22.txRate = 72;
+                if (pct >= 0.25 && pct < 0.255) snap._events.push({ clientId: 'c22', type: 'band', detail: '2.4 GHz' });
+            } else if (pct >= 0.29 && pct < 0.295) {
+                snap._events.push({ clientId: 'c22', type: 'band', detail: '5 GHz' });
+            }
+        }
+
+        // 4. Client band roam: Tom's Pixel 9 6GHz→5GHz on upstairs (hour 18-19, pct 0.75-0.79)
+        const c43 = snap.clients.find(c => c.id === 'c43');
+        if (c43 && c43.status === 'online') {
+            if (pct >= 0.75 && pct < 0.79) {
+                c43.band = '5 GHz';
+                c43.rssi = -46;
+                c43.rxRate = 573; c43.txRate = 573;
+                if (pct >= 0.75 && pct < 0.755) snap._events.push({ clientId: 'c43', type: 'band', detail: '5 GHz' });
+            } else if (pct >= 0.79 && pct < 0.795) {
+                snap._events.push({ clientId: 'c43', type: 'band', detail: '6 GHz' });
+            }
+        }
+
+        // 5. Satellite topology change: dining reconnects gateway→kitchen (hour 20-21, pct 0.83-0.88)
+        const satDining = snap.satellites.find(s => s.id === 'sat-dining');
+        if (satDining) {
+            if (pct >= 0.83 && pct < 0.88) {
+                satDining.parentId = 'gateway';
+                satDining.hops = 1;
+                if (pct >= 0.83 && pct < 0.835) snap._events.push({ clientId: 'sat-dining', type: 'topology', detail: 'Direct → Gateway' });
+            } else if (pct >= 0.88 && pct < 0.885) {
+                snap._events.push({ clientId: 'sat-dining', type: 'topology', detail: 'Via KITCHEN_AP' });
+            }
+        }
+
+        // 6. Satellite offline + client roaming: upstairs goes offline (hour 10-12, pct 0.42-0.50)
+        //    Some clients roam to living room, others go offline
         const outageStart = Math.floor(totalSnapshots * 0.42);
         const outageEnd = Math.floor(totalSnapshots * 0.50);
         snap.satellites.forEach(sat => {
             if (sat.id === 'sat-upstairs' && i >= outageStart && i <= outageEnd) {
                 sat.status = 'offline';
                 sat.throughput = { down: 0, up: 0 };
+                // Roam some clients to living room, others go offline
                 snap.clients.forEach(cl => {
                     if (cl.parentId === 'sat-upstairs') {
-                        cl.status = 'offline';
-                        cl.activity = { down: 0, up: 0 };
+                        if (['c41', 'c43', 'c88'].includes(cl.id)) {
+                            // These clients roam to living room
+                            cl.parentId = 'sat-living';
+                            cl.rssi = cl.rssi - 8;
+                            if (i === outageStart) snap._events.push({ clientId: cl.id, type: 'roam', detail: 'LIVING_ROOM_AP' });
+                        } else {
+                            cl.status = 'offline';
+                            cl.activity = { down: 0, up: 0 };
+                            if (i === outageStart) snap._events.push({ clientId: cl.id, type: 'offline', detail: 'AP offline' });
+                        }
                     }
                 });
+                if (i === outageStart) snap._events.push({ clientId: 'sat-upstairs', type: 'offline', detail: 'Node offline' });
             } else if (sat.id === 'sat-upstairs') {
                 sat.status = 'online';
+                if (i === outageEnd + 1) {
+                    snap._events.push({ clientId: 'sat-upstairs', type: 'online', detail: 'Node online' });
+                    // Clients return from living room
+                    snap.clients.forEach(cl => {
+                        if (['c41', 'c43', 'c88'].includes(cl.id)) {
+                            snap._events.push({ clientId: cl.id, type: 'roam', detail: 'UPSTAIRS_AP' });
+                        }
+                    });
+                }
             }
         });
 
@@ -2480,8 +2983,12 @@ function generateMockSnapshots() {
     return snapshots;
 }
 
+let tmPrevSnap = null; // track previous snapshot for diffing
+let tmIsFirstSnapshot = true;
+
 function applySnapshot(index) {
     if (index < 0 || index >= tmSnapshots.length) return;
+    const prevIndex = tmCurrentIndex;
     tmCurrentIndex = index;
 
     const snap = tmSnapshots[index];
@@ -2491,12 +2998,30 @@ function applySnapshot(index) {
     TOPOLOGY.satellites = snap.satellites;
     TOPOLOGY.clients = snap.clients;
 
-    // Re-render everything
-    renderTopologyGraph();
+    // Use incremental update if we already have a rendered view and not scrubbing far
+    const canIncremental = timeMachineActive && !tmIsFirstSnapshot &&
+        Math.abs(index - prevIndex) <= 3;
+
+    if (canIncremental) {
+        applySnapshotIncremental(snap);
+    } else {
+        renderTopologyGraph();
+    }
     layoutConnections();
     updateStats();
     updateClientActivityPulses();
-    requestAnimationFrame(() => checkAutoSimplify());
+
+    // Clear old event labels and show new ones for this snapshot
+    tmEventLabelTimers.forEach(t => clearTimeout(t));
+    tmEventLabelTimers = [];
+    document.querySelectorAll('.tm-event-label').forEach(el => el.remove());
+
+    if (snap._events && snap._events.length > 0 && canIncremental) {
+        snap._events.forEach(evt => showClientEvent(evt));
+    }
+
+    tmIsFirstSnapshot = false;
+    tmPrevSnap = snap;
 
     // Update slider and timestamp
     const slider = document.getElementById('tmSlider');
@@ -2514,6 +3039,132 @@ function applySnapshot(index) {
 
     // Update client count in badge
     updateTmBadge();
+}
+
+// ── Incremental DOM update for Time Machine ──
+// Instead of full rebuild, reuses existing DOM elements and lets CSS transitions animate
+function applySnapshotIncremental(snap) {
+    const container = document.getElementById('topologyNodes');
+
+    // Record old positions for FLIP animation
+    const oldRects = {};
+    container.querySelectorAll('.device-node, .band-group, .client-node').forEach(el => {
+        const id = el.dataset.id || el.dataset.groupId;
+        if (id) oldRects[id] = el.getBoundingClientRect();
+    });
+
+    // Full DOM rebuild — renderTopologyGraph will create fresh elements
+    renderTopologyGraph();
+
+    // FLIP: record new positions, compute delta, apply inverse transform, then release
+    const flipEls = container.querySelectorAll('.device-node, .band-group, .client-node');
+    const toAnimate = [];
+
+    flipEls.forEach(el => {
+        const id = el.dataset.id || el.dataset.groupId;
+        const oldRect = id ? oldRects[id] : null;
+        if (!oldRect) {
+            // New element — fade in
+            el.classList.add('tm-entering');
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => el.classList.remove('tm-entering'));
+            });
+            return;
+        }
+        const newRect = el.getBoundingClientRect();
+        const dx = oldRect.left - newRect.left;
+        const dy = oldRect.top - newRect.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+
+        // Invert: instantly place at old position (no transition)
+        el.style.transition = 'none';
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        toAnimate.push(el);
+    });
+
+    // Force reflow so the browser commits the inverted transforms
+    void container.offsetHeight;
+
+    // Play: use double-rAF to guarantee the inversion is painted before releasing
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            toAnimate.forEach(el => {
+                el.style.transition = '';
+                el.style.transform = '';
+            });
+        });
+    });
+}
+
+// ── Event pop-in labels ──
+let tmEventLabelTimers = []; // track fade-out timers so we can freeze them
+
+function showClientEvent(evt) {
+    const container = document.getElementById('topologyNodes');
+    const target = container.querySelector(`[data-id="${evt.clientId}"]`);
+    if (!target) return;
+
+    const typeLabels = {
+        roam: 'Roam →',
+        band: 'Band →',
+        offline: '',
+        online: '',
+        topology: '',
+    };
+    const prefix = typeLabels[evt.type] ?? '';
+    const text = prefix ? `${prefix} ${evt.detail}` : evt.detail;
+
+    const label = document.createElement('div');
+    label.className = `tm-event-label tm-event-${evt.type}`;
+    label.textContent = text;
+
+    // Attach as child of target so it moves with FLIP animations
+    target.style.position = target.style.position || 'relative';
+    label.style.top = '-18px';
+    target.appendChild(label);
+
+    // Fade in
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            label.classList.add('tm-event-visible');
+        });
+    });
+
+    // Schedule fade-out (can be frozen by pause)
+    const timerId = setTimeout(() => {
+        if (label.classList.contains('tm-frozen')) return; // frozen, don't fade
+        fadeOutEventLabel(label);
+    }, 4000);
+
+    label._fadeTimer = timerId;
+    tmEventLabelTimers.push(timerId);
+}
+
+function fadeOutEventLabel(label) {
+    label.classList.remove('tm-event-visible');
+    label.addEventListener('transitionend', () => label.remove(), { once: true });
+    // Safety cleanup in case transitionend doesn't fire
+    setTimeout(() => { if (label.parentNode) label.remove(); }, 500);
+}
+
+function tmFreezeEventLabels() {
+    // Cancel all pending fade-out timers
+    tmEventLabelTimers.forEach(t => clearTimeout(t));
+    tmEventLabelTimers = [];
+    // Freeze all visible labels
+    document.querySelectorAll('.tm-event-label').forEach(label => {
+        label.classList.add('tm-frozen');
+    });
+}
+
+function tmUnfreezeEventLabels() {
+    document.querySelectorAll('.tm-event-label.tm-frozen').forEach(label => {
+        label.classList.remove('tm-frozen');
+        // Restart fade-out timer from now
+        const timerId = setTimeout(() => fadeOutEventLabel(label), 2000);
+        label._fadeTimer = timerId;
+        tmEventLabelTimers.push(timerId);
+    });
 }
 
 function updateTmBadge() {
@@ -2542,6 +3193,8 @@ function activateTimeMachine() {
 
     // Generate mock snapshots
     tmSnapshots = generateMockSnapshots();
+    tmIsFirstSnapshot = true;
+    tmPrevSnap = null;
 
     // Update UI
     document.body.classList.add('time-machine-active');
@@ -2587,7 +3240,6 @@ function deactivateTimeMachine() {
     layoutConnections();
     updateStats();
     updateClientActivityPulses();
-    requestAnimationFrame(() => checkAutoSimplify());
 
     // Restart live animations
     startAnimations();
@@ -2611,12 +3263,22 @@ function deactivateTimeMachine() {
     tmSnapshots = [];
     tmOriginalTopology = null;
     tmCurrentIndex = 0;
+    tmPrevSnap = null;
+    tmIsFirstSnapshot = true;
+
+    // Remove any lingering event labels and cancel timers
+    tmEventLabelTimers.forEach(t => clearTimeout(t));
+    tmEventLabelTimers = [];
+    document.querySelectorAll('.tm-event-label').forEach(el => el.remove());
 }
 
 function tmPlay() {
     if (tmPlayInterval) return; // already playing
     const btn = document.getElementById('tmPlayPause');
     if (btn) btn.innerHTML = '<i class="ph-bold ph-pause"></i>';
+
+    // Unfreeze any frozen labels
+    tmUnfreezeEventLabels();
 
     const interval = 1000 / tmPlaySpeed;
     tmPlayInterval = setInterval(() => {
@@ -2635,6 +3297,9 @@ function tmPause() {
     }
     const btn = document.getElementById('tmPlayPause');
     if (btn) btn.innerHTML = '<i class="ph-bold ph-play"></i>';
+
+    // Freeze any visible event labels
+    tmFreezeEventLabels();
 }
 
 function tmTogglePlayPause() {
@@ -2684,7 +3349,7 @@ function bindTimeMachineEvents() {
         if (timeMachineActive) {
             deactivateTimeMachine();
         } else {
-            activateTimeMachine();
+            switchView('time-machine');
         }
     });
 
@@ -2979,4 +3644,8 @@ function parseTopologyJson(raw) {
 document.addEventListener('DOMContentLoaded', () => {
     init();
     bindTimeMachineEvents();
+    bindClientsEvents();
+    // Auto-switch view via URL param (e.g., ?view=clients)
+    const urlView = new URLSearchParams(location.search).get('view');
+    if (urlView) switchView(urlView);
 });
