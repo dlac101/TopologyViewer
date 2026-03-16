@@ -276,6 +276,29 @@ const TOPOLOGY = {
     ],
 };
 
+// Auto-generate qoeBreakdown for wireless clients that don't have one
+TOPOLOGY.clients.forEach(c => {
+    if (c.qoeBreakdown || c.connection === 'ethernet' || !c.band) return;
+    // Derive plausible factor scores from RSSI and link rate
+    const rssiNorm = c.rssi ? Math.max(0, Math.min(1, (c.rssi + 85) / 55)) : 0.5;
+    const rateMax = 5765;
+    const rateNorm = Math.min(1, (c.rxRate || 0) / rateMax);
+    const snr = Math.round(rssiNorm * 100);
+    const phyRate = Math.round(rateNorm * 100);
+    const uptime = c.connectedSince || '';
+    const stability = uptime.includes('d') ? 85 + Math.round(Math.random() * 15) :
+        uptime.includes('h') ? 55 + Math.round(Math.random() * 30) : 30 + Math.round(Math.random() * 25);
+    const retransmission = Math.round(50 + rssiNorm * 40 + (Math.random() - 0.5) * 20);
+    const airtime = Math.round(40 + rateNorm * 30 + rssiNorm * 20 + (Math.random() - 0.5) * 15);
+    c.qoeBreakdown = {
+        snr: Math.max(0, Math.min(100, snr)),
+        phyRate: Math.max(0, Math.min(100, phyRate)),
+        stability: Math.max(0, Math.min(100, stability)),
+        retransmission: Math.max(0, Math.min(100, retransmission)),
+        airtime: Math.max(0, Math.min(100, airtime)),
+    };
+});
+
 // Sparkline history data (last 20 data points)
 function generateSparkline(base, variance, points = 20) {
     return Array.from({ length: points }, () => Math.max(0, base + (Math.random() - 0.5) * variance * 2));
@@ -448,7 +471,7 @@ function renderQoESparklineSVG(history, width, height, opts = {}) {
     if (scores.length < 2) return '';
 
     const pad = 4;
-    const hmRowH = 3, hmGap = 1, hmMargin = 3;
+    const hmRowH = 6, hmGap = 2, hmMargin = 4;
     const factorKeys = ['snr', 'phyRate', 'stability', 'retransmission', 'airtime'];
     const factorLabels = ['SNR', 'PHY', 'Stab', 'Ret', 'Air'];
     const hasFactors = showHeatmap && history.factors && Object.keys(history.factors).length > 0;
@@ -506,12 +529,6 @@ function renderQoESparklineSVG(history, width, height, opts = {}) {
             for (let i = 0; i < fdata.length; i++) {
                 svg += `<rect x="${pad + i * step}" y="${ry}" width="${step + 0.5}" height="${hmRowH}" fill="${QOE_HEATMAP_FILLS[qoeZone(fdata[i])]}" rx="0.5"/>`;
             }
-        });
-        // Factor labels (tiny, left-aligned)
-        factorKeys.forEach((key, row) => {
-            if (!history.factors[key]) return;
-            const ry = hmY0 + row * (hmRowH + hmGap) + hmRowH - 0.5;
-            svg += `<text x="${pad + 1}" y="${ry}" fill="rgba(255,255,255,0.4)" font-size="2.5" font-family="var(--font-mono, monospace)">${factorLabels[row]}</text>`;
         });
     }
 
@@ -2093,7 +2110,18 @@ function renderDeviceDetail(device) {
         html += '<div class="detail-section">';
         html += '<div class="detail-section-title">QoE History <span class="detail-section-sub">Last hour</span></div>';
         html += `<div class="detail-qoe-sparkline" data-device-id="${device.id}">`;
-        html += renderQoESparklineSVG(history, 260, 64, { showThresholds: true, showHeatmap: hasFactors, showTimeLabels: true });
+        if (hasFactors) {
+            const fKeys = ['snr', 'phyRate', 'stability', 'retransmission', 'airtime'];
+            const fLabels = ['SNR', 'PHY', 'Stab', 'Ret', 'Air'];
+            const activeFLabels = fKeys.map((k, i) => history.factors?.[k] ? fLabels[i] : null).filter(Boolean);
+            html += '<div class="qoe-hm-labels">';
+            activeFLabels.forEach(l => { html += `<span class="qoe-hm-label">${l}</span>`; });
+            html += '</div>';
+        }
+        html += '<div class="qoe-sparkline-wrap">';
+        html += renderQoESparklineSVG(history, 260, 64, { showThresholds: true, showHeatmap: hasFactors, showTimeLabels: false });
+        html += '<div class="qoe-time-labels"><span>60m ago</span><span>now</span></div>';
+        html += '</div>';
         html += '<div class="qoe-hover-tooltip"></div>';
         html += '<div class="qoe-hover-line"></div>';
         html += '<div class="qoe-hover-dot"></div>';
