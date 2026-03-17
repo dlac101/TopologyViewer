@@ -483,8 +483,8 @@ body {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
-.cl-throughput-down { color: var(--accent-cyan); }
-.cl-throughput-up { color: var(--accent-green); }
+.cl-throughput-down { color: var(--text-secondary); }
+.cl-throughput-up { color: var(--text-secondary); }
 
 .cl-icon {
     display: inline-flex;
@@ -519,31 +519,24 @@ body {
     letter-spacing: 0.02em;
 }
 
-/* Type badges */
-.cl-badge.type-phone     { background: rgba(34, 211, 238, 0.12); color: var(--accent-cyan); }
-.cl-badge.type-laptop    { background: rgba(167, 139, 250, 0.12); color: var(--accent-purple); }
-.cl-badge.type-desktop   { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
-.cl-badge.type-tablet    { background: rgba(244, 114, 182, 0.12); color: #f472b6; }
-.cl-badge.type-streaming { background: rgba(251, 191, 36, 0.12); color: var(--accent-amber); }
-.cl-badge.type-iot       { background: rgba(52, 211, 153, 0.12); color: var(--accent-green); }
-.cl-badge.type-camera    { background: rgba(239, 68, 68, 0.12); color: var(--accent-red); }
-.cl-badge.type-speaker   { background: rgba(251, 146, 60, 0.12); color: #fb923c; }
-.cl-badge.type-printer   { background: rgba(148, 163, 184, 0.12); color: #94a3b8; }
-.cl-badge.type-server    { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
-.cl-badge.type-default   { background: rgba(148, 163, 184, 0.10); color: var(--text-muted); }
+/* Type badges — uniform monochrome */
+.cl-badge[class*="type-"] {
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--text-secondary);
+}
 
-/* Band badges */
-.cl-badge.band-6ghz     { background: rgba(52, 211, 153, 0.12); color: var(--accent-green); }
-.cl-badge.band-5ghz     { background: rgba(167, 139, 250, 0.12); color: var(--accent-purple); }
-.cl-badge.band-2-4ghz   { background: rgba(251, 191, 36, 0.12); color: var(--accent-amber); }
-.cl-badge.band-ethernet  { background: rgba(34, 211, 238, 0.12); color: var(--accent-cyan); }
+/* Band badges — grayscale hierarchy: lighter = better */
+.cl-badge.band-6ghz     { background: rgba(255, 255, 255, 0.10); color: rgba(255, 255, 255, 0.85); }
+.cl-badge.band-5ghz     { background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.60); }
+.cl-badge.band-2-4ghz   { background: rgba(255, 255, 255, 0.04); color: rgba(255, 255, 255, 0.38); }
+.cl-badge.band-ethernet  { background: rgba(255, 255, 255, 0.10); color: rgba(255, 255, 255, 0.85); }
 
-/* Wi-Fi gen badges — reuse pill badge colors */
-.cl-badge.wifi-7  { background: rgba(244, 114, 182, 0.15); color: #f472b6; }
-.cl-badge.wifi-6e { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
-.cl-badge.wifi-6  { background: rgba(34, 211, 238, 0.15); color: var(--accent-cyan); }
-.cl-badge.wifi-5  { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
-.cl-badge.wifi-4  { background: rgba(251, 191, 36, 0.15); color: var(--accent-amber); }
+/* Wi-Fi gen badges — grayscale hierarchy: lighter = better */
+.cl-badge.wifi-7  { background: rgba(255, 255, 255, 0.10); color: rgba(255, 255, 255, 0.85); }
+.cl-badge.wifi-6e { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.72); }
+.cl-badge.wifi-6  { background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.60); }
+.cl-badge.wifi-5  { background: rgba(255, 255, 255, 0.05); color: rgba(255, 255, 255, 0.45); }
+.cl-badge.wifi-4  { background: rgba(255, 255, 255, 0.04); color: rgba(255, 255, 255, 0.35); }
 
 .topology-svg {
     position: absolute;
