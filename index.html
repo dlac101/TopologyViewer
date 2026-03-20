@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intellifi Topology</title>
-    <link rel="stylesheet" href="styles.css?v=136">
+    <link rel="stylesheet" href="styles.css?v=137">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
@@ -173,9 +173,8 @@
                     <div class="cf-multi" id="chBandFilter" data-label="Band"></div>
                 </div>
                 <div class="ch-toolbar-right">
-                    <button class="ch-sort-btn" id="chSortToggle" title="Toggle sort">
-                        <i class="ph-bold ph-sort-descending"></i> Most Active
-                    </button>
+                    <div class="cf-multi" id="chSortSelect" data-label="Sort">
+                    </div>
                     <span class="ch-data-badge" id="chDataBadge" style="display:none">MOCK DATA</span>
                     <button class="ch-refresh-btn" id="chRefresh" title="Refresh data">
                         <i class="ph-bold ph-arrows-clockwise"></i>
@@ -199,6 +198,6 @@
         </aside>
     </main>
 
-    <script src="app.js?v=159"></script>
+    <script src="app.js?v=160"></script>
 </body>
 </html>

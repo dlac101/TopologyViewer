@@ -2466,15 +2466,7 @@ body {
     border: 1px solid var(--accent-amber); border-radius: 3px;
     padding: 2px 6px;
 }
-.ch-sort-btn {
-    background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
-    color: var(--text-secondary); cursor: pointer; padding: 4px 10px; font-size: 11px;
-    font-family: var(--font-mono);
-    transition: color var(--transition), border-color var(--transition);
-    display: flex; align-items: center; gap: 4px;
-}
-.ch-sort-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
-.ch-sort-btn i { font-size: 13px; }
+
 .ch-refresh-btn {
     background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
     color: var(--text-secondary); cursor: pointer; padding: 4px 8px; font-size: 14px;
