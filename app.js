@@ -3962,7 +3962,7 @@ let chTooltipEl = null;
 let chDetailCache = {};
 let chBandFilter = new Set();
 let chUsingMock = false;
-let chSortMode = 'activity'; // 'activity' or 'qoe'
+let chSortMode = 'activity'; // activity, qoe, band, alpha, recent, type
 
 function chMacClean(mac) { return mac.replace(/:/g, '').toUpperCase(); }
 function chMacFormat(clean) {
@@ -4265,15 +4265,39 @@ function renderHeatmapGrid(container, heatmapData) {
             return chBandFilter.has(b);
         });
     }
-    if (chSortMode === 'qoe') {
-        // Worst QoE first (lowest avg score among active clients)
-        entries.sort((a, b) => {
-            const aScore = a.totalActive > 0 ? a.avgScore : 999;
-            const bScore = b.totalActive > 0 ? b.avgScore : 999;
-            return aScore - bScore || b.totalActive - a.totalActive;
-        });
-    } else {
-        entries.sort((a, b) => b.totalActive - a.totalActive || b.avgScore - a.avgScore);
+    const bandOrder = { '6G': 0, '5G': 1, '2G': 2 };
+    const getBandIdx = d => {
+        const b = (d.band || '').toUpperCase();
+        return b.includes('6') ? 0 : b.includes('5') ? 1 : 2;
+    };
+    // Find each client's device type from TOPOLOGY for type sort
+    const getType = d => {
+        const c = TOPOLOGY.clients.find(c => chMacClean(c.mac || c.id) === d.mac);
+        return c?.type || 'unknown';
+    };
+    // Find most recent active bucket index
+    const lastActive = d => {
+        for (let i = d.active.length - 1; i >= 0; i--) { if (d.active[i]) return i; }
+        return -1;
+    };
+
+    switch (chSortMode) {
+        case 'qoe':
+            entries.sort((a, b) => {
+                const aS = a.totalActive > 0 ? a.avgScore : 999;
+                const bS = b.totalActive > 0 ? b.avgScore : 999;
+                return aS - bS || b.totalActive - a.totalActive;
+            }); break;
+        case 'band':
+            entries.sort((a, b) => getBandIdx(a) - getBandIdx(b) || b.totalActive - a.totalActive); break;
+        case 'alpha':
+            entries.sort((a, b) => (a.hostname || '').localeCompare(b.hostname || '')); break;
+        case 'recent':
+            entries.sort((a, b) => lastActive(b) - lastActive(a) || b.totalActive - a.totalActive); break;
+        case 'type':
+            entries.sort((a, b) => getType(a).localeCompare(getType(b)) || b.totalActive - a.totalActive); break;
+        default: // activity
+            entries.sort((a, b) => b.totalActive - a.totalActive || b.avgScore - a.avgScore);
     }
 
     // Time axis — place labels at correct grid columns
@@ -4721,16 +4745,49 @@ function bindClientHistoryEvents() {
         if (e.key === 'Escape' && chSelectedMac) closeDetailDrawer();
     });
 
-    // Sort toggle
-    const sortBtn = document.getElementById('chSortToggle');
-    if (sortBtn) {
-        sortBtn.addEventListener('click', () => {
-            chSortMode = chSortMode === 'activity' ? 'qoe' : 'activity';
-            sortBtn.innerHTML = chSortMode === 'activity'
-                ? '<i class="ph-bold ph-sort-descending"></i> Most Active'
-                : '<i class="ph-bold ph-sort-ascending"></i> Worst QoE';
+    // Sort dropdown (single-select, radio-style)
+    const sortContainer = document.getElementById('chSortSelect');
+    if (sortContainer) {
+        const sortOpts = [
+            { value: 'activity', text: 'Most Active' },
+            { value: 'qoe', text: 'Worst QoE' },
+            { value: 'recent', text: 'Recently Active' },
+            { value: 'band', text: 'By Band' },
+            { value: 'type', text: 'By Device Type' },
+            { value: 'alpha', text: 'Alphabetical' },
+        ];
+        const sBtn = document.createElement('div');
+        sBtn.className = 'cf-multi-btn';
+        sBtn.innerHTML = '<i class="ph-bold ph-sort-descending" style="margin-right:4px"></i> Most Active';
+        const sMenu = document.createElement('div');
+        sMenu.className = 'cf-multi-menu';
+        sortOpts.forEach(o => {
+            const item = document.createElement('div');
+            item.className = 'cf-multi-item' + (o.value === chSortMode ? ' checked' : '');
+            item.dataset.value = o.value;
+            item.textContent = o.text;
+            item.style.cursor = 'pointer';
+            item.style.padding = '4px 10px';
+            sMenu.appendChild(item);
+        });
+        sortContainer.appendChild(sBtn);
+        sortContainer.appendChild(sMenu);
+        sBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            document.querySelectorAll('.cf-multi.open').forEach(m => { if (m !== sortContainer) m.classList.remove('open'); });
+            sortContainer.classList.toggle('open');
+        });
+        sMenu.addEventListener('click', e => {
+            const item = e.target.closest('.cf-multi-item');
+            if (!item) return;
+            chSortMode = item.dataset.value;
+            sMenu.querySelectorAll('.cf-multi-item').forEach(i => i.classList.toggle('checked', i.dataset.value === chSortMode));
+            const label = sortOpts.find(o => o.value === chSortMode)?.text || 'Sort';
+            sBtn.innerHTML = `<i class="ph-bold ph-sort-descending" style="margin-right:4px"></i> ${label}`;
+            sortContainer.classList.remove('open');
             if (chCachedHeatmap) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
         });
+        document.addEventListener('click', () => sortContainer.classList.remove('open'));
     }
 
     // Band filter (simple standalone, not coupled to clientsFilters)
