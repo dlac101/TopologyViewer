@@ -2466,6 +2466,15 @@ body {
     border: 1px solid var(--accent-amber); border-radius: 3px;
     padding: 2px 6px;
 }
+.ch-sort-btn {
+    background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text-secondary); cursor: pointer; padding: 4px 10px; font-size: 11px;
+    font-family: var(--font-mono);
+    transition: color var(--transition), border-color var(--transition);
+    display: flex; align-items: center; gap: 4px;
+}
+.ch-sort-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
+.ch-sort-btn i { font-size: 13px; }
 .ch-refresh-btn {
     background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
     color: var(--text-secondary); cursor: pointer; padding: 4px 8px; font-size: 14px;
@@ -2475,7 +2484,7 @@ body {
 
 /* Network Pulse header */
 .ch-pulse-header {
-    height: 110px;
+    height: 122px;
     padding: 10px 16px 4px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -2496,6 +2505,11 @@ body {
 .ch-pulse-legend-dot {
     display: inline-block; width: 8px; height: 8px;
     border-radius: 2px; margin-right: 4px; vertical-align: middle;
+}
+.ch-pulse-times {
+    display: flex; justify-content: space-between;
+    font-size: 8px; font-family: var(--font-mono);
+    color: var(--text-muted); padding: 1px 0 0;
 }
 
 /* Heatmap grid */
@@ -2630,10 +2644,11 @@ body {
 .ch-detail-chart-title {
     font-size: 9px; font-family: var(--font-mono); font-weight: 600;
     letter-spacing: 0.06em;
-    color: var(--text-muted); margin-bottom: 4px;
+    color: var(--text-primary); margin-bottom: 4px;
 }
 .ch-detail-chart-body {
     flex: 1; position: relative; min-height: 0; cursor: crosshair; overflow: hidden;
+    padding-left: 20px;
 }
 .ch-crosshair {
     position: absolute; top: 0; bottom: 0; width: 1px;
@@ -2647,7 +2662,12 @@ body {
 .ch-detail-chart-body svg { width: 100%; height: 100%; display: block; }
 .ch-detail-y-label {
     position: absolute; left: 0; font-size: 8px; font-family: var(--font-mono);
-    color: var(--text-muted); pointer-events: none; z-index: 1;
+    color: var(--text-primary); pointer-events: none; z-index: 1;
+}
+.ch-detail-times {
+    position: relative; height: 12px;
+    font-size: 8px; font-family: var(--font-mono);
+    color: var(--text-muted); flex-shrink: 0;
 }
 
 /* Loading skeleton */
