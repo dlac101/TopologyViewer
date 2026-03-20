@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intellifi Topology</title>
-    <link rel="stylesheet" href="styles.css?v=137">
+    <link rel="stylesheet" href="styles.css?v=138">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
@@ -173,6 +173,13 @@
                     <div class="cf-multi" id="chBandFilter" data-label="Band"></div>
                 </div>
                 <div class="ch-toolbar-right">
+                    <div class="ch-zoom-bar" id="chZoomBar">
+                        <button class="ch-zoom-btn" data-zoom="1h">1H</button>
+                        <button class="ch-zoom-btn" data-zoom="12h">12H</button>
+                        <button class="ch-zoom-btn active" data-zoom="1d">1D</button>
+                        <button class="ch-zoom-btn" data-zoom="3d">3D</button>
+                        <button class="ch-zoom-btn" data-zoom="7d">7D</button>
+                    </div>
                     <div class="cf-multi" id="chSortSelect" data-label="Sort">
                     </div>
                     <span class="ch-data-badge" id="chDataBadge" style="display:none">MOCK DATA</span>
@@ -198,6 +205,6 @@
         </aside>
     </main>
 
-    <script src="app.js?v=160"></script>
+    <script src="app.js?v=162"></script>
 </body>
 </html>
