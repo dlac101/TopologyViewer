@@ -2570,8 +2570,10 @@ function switchView(viewName) {
 
     // If entering Time Machine from another view
     if (viewName === 'time-machine') {
-        if (currentView === 'clients') {
+        if (currentView === 'clients' || currentView === 'client-history') {
             document.getElementById('clientsContainer').style.display = 'none';
+            const hc = document.getElementById('clientHistoryContainer');
+            if (hc) hc.style.display = 'none';
             document.getElementById('topologyContainer').style.display = '';
             const heading = document.querySelector('.top-bar-left h1');
             if (heading) heading.textContent = 'Network Topology';
@@ -2588,15 +2590,24 @@ function switchView(viewName) {
     const clientsContainer = document.getElementById('clientsContainer');
     const heading = document.querySelector('.top-bar-left h1');
 
+    const historyContainer = document.getElementById('clientHistoryContainer');
+
+    // Hide all view containers
+    topoContainer.style.display = 'none';
+    clientsContainer.style.display = 'none';
+    if (historyContainer) historyContainer.style.display = 'none';
+
     if (viewName === 'topology') {
         topoContainer.style.display = '';
-        clientsContainer.style.display = 'none';
         if (heading) heading.textContent = 'Network Topology';
     } else if (viewName === 'clients') {
-        topoContainer.style.display = 'none';
         clientsContainer.style.display = '';
         if (heading) heading.textContent = 'Client Devices';
         renderClientsTable();
+    } else if (viewName === 'client-history') {
+        if (historyContainer) historyContainer.style.display = '';
+        if (heading) heading.textContent = 'Client Activity History';
+        initClientHistory();
     }
 
     // Update nav active states
@@ -3939,11 +3950,774 @@ function parseTopologyJson(raw) {
     };
 }
 
+// ── Client History ──────────────────────────────────
+const CH_NETDATA_BASE = 'http://192.168.0.1:19999';
+const CH_BUCKETS = 96;           // 15-min buckets over 24h
+const CH_CACHE_TTL = 5 * 60000;  // 5 minutes
+let chCachedClients = null;
+let chCachedHeatmap = null;
+let chLastFetchTime = 0;
+let chSelectedMac = null;
+let chTooltipEl = null;
+let chDetailCache = {};
+let chBandFilter = new Set();
+let chUsingMock = false;
+
+function chMacClean(mac) { return mac.replace(/:/g, '').toUpperCase(); }
+function chMacFormat(clean) {
+    return clean.match(/.{2}/g).join(':').toUpperCase();
+}
+
+// Band color helper
+function chBandColor(band) {
+    if (!band) return 'var(--text-muted)';
+    const b = band.toUpperCase();
+    if (b.includes('6')) return 'var(--accent-purple)';
+    if (b.includes('5')) return 'var(--accent-cyan)';
+    return 'var(--accent-amber)';
+}
+function chBandLabel(band) {
+    if (!band) return '?';
+    const b = band.toUpperCase();
+    if (b.includes('6')) return '6 GHz';
+    if (b.includes('5')) return '5 GHz';
+    if (b.includes('2') || b.includes('24')) return '2.4 GHz';
+    return band;
+}
+
+// ── Data Layer ──
+async function chFetchJson(url, timeoutMs = 5000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const r = await fetch(url, { signal: ctrl.signal });
+        if (!r.ok) return null;
+        return await r.json();
+    } catch { return null; }
+    finally { clearTimeout(timer); }
+}
+
+async function chDiscoverClients() {
+    const charts = await chFetchJson(`${CH_NETDATA_BASE}/api/v1/charts`);
+    if (!charts?.charts) return null;
+    const clients = [];
+    const bandMap = {};
+    // Collect band info from signal_quality charts
+    Object.entries(charts.charts).forEach(([k, v]) => {
+        if (!k.startsWith('clientdevice.signal_quality.') || k.includes('wifi_clients')) return;
+        const mac = k.split('.')[2];
+        bandMap[mac] = {
+            band: v.chart_labels?.srg_band || null,
+            hostname: v.chart_labels?.srg_client_hostname || null,
+        };
+    });
+    // Build client list from QoE charts
+    Object.entries(charts.charts).forEach(([k, v]) => {
+        if (!k.startsWith('clientdevice.qoe.')) return;
+        const mac = k.split('.')[2];
+        if (mac === 'wifi_clients') return;
+        const chartType = v.chart_labels?.srg_chart_type;
+        if (chartType === 'ethernet') return; // WiFi only
+        const sig = bandMap[mac] || {};
+        const hostname = sig.hostname || v.chart_labels?.srg_client_hostname || null;
+        const displayName = (hostname && hostname !== '[none]') ? hostname : chMacFormat(mac);
+        clients.push({
+            mac,
+            macFormatted: chMacFormat(mac),
+            hostname: displayName,
+            band: sig.band || null,
+            chartId: k,
+            hasSignal: !!bandMap[mac],
+        });
+    });
+    return clients;
+}
+
+async function chFetchHeatmapData(clients) {
+    const results = new Map();
+    const semaphore = { active: 0, max: 10, queue: [] };
+    const acquire = () => new Promise(resolve => {
+        if (semaphore.active < semaphore.max) { semaphore.active++; resolve(); }
+        else semaphore.queue.push(resolve);
+    });
+    const release = () => {
+        semaphore.active--;
+        if (semaphore.queue.length) { semaphore.active++; semaphore.queue.shift()(); }
+    };
+
+    await Promise.all(clients.map(async (client) => {
+        await acquire();
+        try {
+            const url = `${CH_NETDATA_BASE}/api/v1/data?chart=${client.chartId}&after=-86400&points=${CH_BUCKETS}&format=json`;
+            const data = await chFetchJson(url, 8000);
+            if (!data?.data) return;
+            // dims: [time, score, snr, retrans, phy, airtime, stab]
+            const scores = [];
+            const active = [];
+            const times = [];
+            // netdata returns newest first, reverse for chronological
+            const rows = [...data.data].reverse();
+            rows.forEach(r => {
+                times.push(r[0]);
+                scores.push(r[1]);
+                active.push(r[3] !== null); // retrans non-null = active
+            });
+            results.set(client.mac, {
+                scores, active, times,
+                band: client.band,
+                hostname: client.hostname,
+                mac: client.mac,
+                totalActive: active.filter(Boolean).length,
+                avgScore: scores.filter((s, i) => active[i] && s !== null).reduce((a, b) => a + b, 0) /
+                           (scores.filter((s, i) => active[i] && s !== null).length || 1),
+            });
+        } finally { release(); }
+    }));
+    return results;
+}
+
+function chGenerateMockData() {
+    const clients = TOPOLOGY.clients.filter(c => c.connection !== 'ethernet' && c.status !== 'offline');
+    const results = new Map();
+    clients.forEach(c => {
+        const scores = [];
+        const active = [];
+        const times = [];
+        const now = Math.floor(Date.now() / 1000);
+        let val = computeQoE ? computeQoE(c) : 75;
+        for (let i = 0; i < CH_BUCKETS; i++) {
+            const t = now - (CH_BUCKETS - i) * 900;
+            times.push(t);
+            const hour = new Date(t * 1000).getHours();
+            // Activity pattern based on device type
+            let actProb = 0.3;
+            if (c.type === 'streaming' || c.type === 'tv') actProb = hour >= 19 && hour <= 23 ? 0.9 : 0.1;
+            else if (c.type === 'laptop' || c.type === 'desktop') actProb = hour >= 8 && hour <= 18 ? 0.8 : 0.1;
+            else if (c.type === 'phone') actProb = hour >= 7 && hour <= 23 ? 0.5 : 0.05;
+            else if (c.type === 'iot' || c.type === 'camera') actProb = 0.15;
+            else if (c.type === 'speaker') actProb = hour >= 17 && hour <= 22 ? 0.7 : 0.1;
+            const isActive = Math.random() < actProb;
+            active.push(isActive);
+            val += (Math.random() - 0.5) * 12;
+            val = Math.max(20, Math.min(100, val * 0.9 + (computeQoE ? computeQoE(c) : 75) * 0.1));
+            scores.push(Math.round(val));
+        }
+        const mac = chMacClean(c.mac || c.id);
+        results.set(mac, {
+            scores, active, times,
+            band: c.band?.replace(' GHz', 'G') || null,
+            hostname: c.name,
+            mac,
+            totalActive: active.filter(Boolean).length,
+            avgScore: scores.filter((s, i) => active[i]).reduce((a, b) => a + b, 0) /
+                       (active.filter(Boolean).length || 1),
+        });
+    });
+    return results;
+}
+
+// ── Network Pulse SVG ──
+// Pulse band colors — match Map legend: 6G=purple, 5G=cyan, 2.4G=amber
+const CH_BAND_FILLS = { '6G': 'rgba(168,85,247,0.55)', '5G': 'rgba(0,210,190,0.55)',  '2G': 'rgba(245,158,11,0.50)' };
+const CH_BAND_STROKES = { '6G': 'rgba(168,85,247,0.9)', '5G': 'rgba(0,210,190,0.9)', '2G': 'rgba(245,158,11,0.7)' };
+const CH_BAND_LABELS = { '6G': '6 GHz', '5G': '5 GHz', '2G': '2.4 GHz' };
+let chPulseCounts = null; // cached for tooltip
+
+function renderNetworkPulse(container, heatmapData) {
+    const W = 1400, H = 72, PAD_L = 0, PAD_R = 0, PAD_T = 2, PAD_B = 2;
+    const plotW = W - PAD_L - PAD_R;
+    const plotH = H - PAD_T - PAD_B;
+
+    const bands = ['6G', '5G', '2G'];
+    const counts = bands.map(() => new Array(CH_BUCKETS).fill(0));
+    let maxCount = 1;
+    // Collect first timestamp for time display
+    let firstTimestamp = null;
+    for (const [, d] of heatmapData) {
+        if (!firstTimestamp && d.times?.length) firstTimestamp = d.times[0];
+        const b = (d.band || '').toUpperCase();
+        let idx = b.includes('6') ? 0 : b.includes('5') ? 1 : 2;
+        for (let i = 0; i < CH_BUCKETS; i++) {
+            if (d.active[i]) counts[idx][i]++;
+        }
+    }
+    chPulseCounts = { bands, counts, firstTimestamp };
+
+    const stacked = bands.map((_, bi) => {
+        const row = new Array(CH_BUCKETS);
+        for (let i = 0; i < CH_BUCKETS; i++) {
+            let sum = 0;
+            for (let j = 0; j <= bi; j++) sum += counts[j][i];
+            row[i] = sum;
+        }
+        return row;
+    });
+    for (const s of stacked[stacked.length - 1]) if (s > maxCount) maxCount = s;
+
+    const x = i => PAD_L + (i / (CH_BUCKETS - 1)) * plotW;
+    const y = v => PAD_T + plotH - (v / maxCount) * plotH;
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" style="display:block">`;
+
+    // Grid lines
+    for (let g = 0; g <= maxCount; g += Math.max(1, Math.ceil(maxCount / 4))) {
+        svg += `<line x1="0" y1="${y(g)}" x2="${W}" y2="${y(g)}" stroke="rgba(255,255,255,0.04)" stroke-width="0.5"/>`;
+    }
+
+    // Stacked areas (bottom-up)
+    for (let bi = bands.length - 1; bi >= 0; bi--) {
+        const top = stacked[bi];
+        const bottom = bi > 0 ? stacked[bi - 1] : new Array(CH_BUCKETS).fill(0);
+        let path = `M${x(0)},${y(top[0])}`;
+        for (let i = 1; i < CH_BUCKETS; i++) path += ` L${x(i)},${y(top[i])}`;
+        for (let i = CH_BUCKETS - 1; i >= 0; i--) path += ` L${x(i)},${y(bottom[i])}`;
+        path += 'Z';
+        svg += `<path d="${path}" fill="${CH_BAND_FILLS[bands[bi]]}" stroke="${CH_BAND_STROKES[bands[bi]]}" stroke-width="1"/>`;
+    }
+
+    // Crosshair line inside SVG (vertical lines render fine with preserveAspectRatio="none")
+    svg += `<line id="chPulseCrossLine" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="1" display="none"/>`;
+    svg += '</svg>';
+
+    // Y-axis labels as HTML (won't distort)
+    const yLabels = [];
+    for (let g = 0; g <= maxCount; g += Math.max(1, Math.ceil(maxCount / 4))) {
+        const pct = 100 - ((g / maxCount) * 100);
+        yLabels.push(`<span style="position:absolute;left:2px;top:${pct}%;transform:translateY(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-muted)">${g}</span>`);
+    }
+
+    container.innerHTML = `
+        <div class="ch-pulse-label">Active Clients</div>
+        <div class="ch-pulse-legend">
+            <span><span class="ch-pulse-legend-dot" style="background:${CH_BAND_FILLS['6G']}"></span>6 GHz</span>
+            <span><span class="ch-pulse-legend-dot" style="background:${CH_BAND_FILLS['5G']}"></span>5 GHz</span>
+            <span><span class="ch-pulse-legend-dot" style="background:${CH_BAND_FILLS['2G']}"></span>2.4 GHz</span>
+        </div>
+        <div class="ch-pulse-chart" style="position:relative;padding-left:18px">${yLabels.join('')}${svg}</div>`;
+
+    // Crosshair + tooltip
+    const chartDiv = container.querySelector('.ch-pulse-chart');
+    const svgEl = chartDiv.querySelector('svg');
+    const crossLine = svgEl?.querySelector('#chPulseCrossLine');
+    // HTML dot (SVG circles distort with preserveAspectRatio="none")
+    const pDot = document.createElement('div');
+    pDot.className = 'ch-crosshair-dot';
+    pDot.style.cssText = 'display:none;position:absolute;width:7px;height:7px;border-radius:50%;background:white;box-shadow:0 0 4px rgba(255,255,255,0.6);pointer-events:none;z-index:3;transform:translate(-50%,-50%)';
+    chartDiv.appendChild(pDot);
+
+    chartDiv.addEventListener('mousemove', e => {
+        if (!svgEl) return;
+        const svgRect = svgEl.getBoundingClientRect();
+        const svgXFrac = (e.clientX - svgRect.left) / svgRect.width;
+        const idx = Math.min(CH_BUCKETS - 1, Math.max(0, Math.floor(svgXFrac * CH_BUCKETS)));
+        if (!chPulseCounts) return;
+        const { bands: b, counts: c, firstTimestamp } = chPulseCounts;
+        const t = firstTimestamp ? new Date((firstTimestamp + idx * 900) * 1000) : null;
+        const timeStr = t ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const total = b.reduce((sum, _, bi) => sum + c[bi][idx], 0);
+        let html = `<b>${timeStr}</b> — ${total} active<br>`;
+        b.forEach((band, bi) => {
+            if (c[bi][idx] > 0) html += `<span style="color:${CH_BAND_STROKES[band]}">${CH_BAND_LABELS[band]}: ${c[bi][idx]}</span><br>`;
+        });
+        chShowTooltip(e, html);
+
+        // SVG crosshair line
+        const dataX = x(idx);
+        if (crossLine) {
+            crossLine.setAttribute('x1', dataX);
+            crossLine.setAttribute('x2', dataX);
+            crossLine.setAttribute('display', '');
+        }
+
+        // HTML dot via getScreenCTM — converts SVG coords to screen coords accurately
+        const topCount = stacked[stacked.length - 1][idx];
+        const dataY = y(topCount);
+        const ctm = svgEl.getScreenCTM();
+        if (ctm) {
+            const screenX = ctm.a * dataX + ctm.e;
+            const screenY = ctm.d * dataY + ctm.f;
+            const chartRect = chartDiv.getBoundingClientRect();
+            pDot.style.display = '';
+            pDot.style.left = (screenX - chartRect.left) + 'px';
+            pDot.style.top = (screenY - chartRect.top) + 'px';
+        }
+    });
+    chartDiv.addEventListener('mouseleave', () => {
+        chHideTooltip();
+        if (crossLine) crossLine.setAttribute('display', 'none');
+        pDot.style.display = 'none';
+    });
+}
+
+
+// ── Heatmap Grid ──
+function renderHeatmapGrid(container, heatmapData) {
+    // Sort: most active first, then by avg QoE descending
+    let entries = [...heatmapData.values()];
+    if (chBandFilter.size > 0) {
+        entries = entries.filter(d => {
+            const b = chBandLabel(d.band);
+            return chBandFilter.has(b);
+        });
+    }
+    entries.sort((a, b) => b.totalActive - a.totalActive || b.avgScore - a.avgScore);
+
+    // Time axis — place labels at correct grid columns
+    let html = '<div class="ch-time-axis" id="chTimeAxis"><div></div>';
+    for (let h = 0; h < 24; h += 3) {
+        const col = Math.round((h / 24) * 96) + 2; // +2 for 1-indexed grid + label column
+        html += `<div class="ch-time-label" style="grid-column:${col}">${String(h).padStart(2, '0')}:00</div>`;
+    }
+    html += '</div>';
+
+    // Rows
+    entries.forEach(d => {
+        html += `<div class="ch-row${chSelectedMac === d.mac ? ' ch-row-selected' : ''}" data-mac="${d.mac}">`;
+        html += `<div class="ch-row-label"><span class="ch-band-dot" style="background:${chBandColor(d.band)}"></span>${escapeHtml(d.hostname)}</div>`;
+        for (let i = 0; i < CH_BUCKETS; i++) {
+            const score = d.scores[i];
+            const isActive = d.active[i];
+            let cls = 'ch-cell-idle';
+            if (score === null || score === undefined) cls = 'ch-cell-nodata';
+            else if (isActive) {
+                if (score >= 70) cls = 'ch-cell-good';
+                else if (score >= 40) cls = 'ch-cell-fair';
+                else cls = 'ch-cell-poor';
+            }
+            const t = d.times[i];
+            const timeStr = t ? new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            html += `<div class="ch-cell ${cls}" data-idx="${i}" data-score="${score ?? ''}" data-active="${isActive}" data-time="${timeStr}"></div>`;
+        }
+        html += '</div>';
+    });
+
+    container.innerHTML = html;
+}
+
+function escapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Tooltip ──
+function chShowTooltip(e, html) {
+    if (!chTooltipEl) {
+        chTooltipEl = document.createElement('div');
+        chTooltipEl.className = 'ch-tooltip';
+        document.body.appendChild(chTooltipEl);
+    }
+    chTooltipEl.innerHTML = html;
+    chTooltipEl.style.display = 'block';
+    // Flip to left side if near right edge
+    const tipWidth = chTooltipEl.offsetWidth || 150;
+    if (e.clientX + tipWidth + 20 > window.innerWidth) {
+        chTooltipEl.style.left = (e.clientX - tipWidth - 12) + 'px';
+    } else {
+        chTooltipEl.style.left = (e.clientX + 12) + 'px';
+    }
+    chTooltipEl.style.top = (e.clientY - 30) + 'px';
+}
+function chHideTooltip() {
+    if (chTooltipEl) chTooltipEl.style.display = 'none';
+}
+
+// ── Detail Drawer ──
+async function openDetailDrawer(mac) {
+    chSelectedMac = mac;
+    const drawer = document.getElementById('chDetailDrawer');
+    drawer.classList.add('open');
+    // Highlight selected row
+    document.querySelectorAll('.ch-row').forEach(r => r.classList.toggle('ch-row-selected', r.dataset.mac === mac));
+
+    const clientInfo = chCachedHeatmap?.get(mac);
+    const name = clientInfo?.hostname || chMacFormat(mac);
+    const band = clientInfo?.band;
+
+    drawer.innerHTML = `<div class="ch-detail-header">
+        <div><span class="ch-detail-client-name">${escapeHtml(name)}</span>
+        <span class="ch-detail-client-meta">${chBandLabel(band)} / ${chMacFormat(mac)}</span></div>
+        <button class="ch-detail-close" id="chDetailClose">&times;</button>
+    </div><div class="ch-detail-charts"><div class="ch-loading">Loading detail data</div></div>`;
+
+    document.getElementById('chDetailClose').addEventListener('click', closeDetailDrawer);
+
+    // Fetch high-res data
+    const detail = await chFetchDetailData(mac);
+    if (chSelectedMac !== mac) return; // user clicked another
+
+    renderDetailCharts(drawer, detail, name, band);
+}
+
+async function chFetchDetailData(mac) {
+    if (chDetailCache[mac]) return chDetailCache[mac];
+
+    if (chUsingMock) {
+        // Generate mock detail
+        const d = chCachedHeatmap?.get(mac);
+        const points = 1440;
+        const now = Math.floor(Date.now() / 1000);
+        const scores = [], signal = [], throughput = [], retrans = [], times = [];
+        let val = d?.avgScore || 75, sig = -45, tp = 0, rt = 5;
+        for (let i = 0; i < points; i++) {
+            const t = now - (points - i) * 60;
+            times.push(t);
+            const hour = new Date(t * 1000).getHours();
+            const isActive = d ? d.active[Math.floor(i / 15)] : Math.random() > 0.5;
+            val += (Math.random() - 0.5) * 6;
+            val = Math.max(15, Math.min(100, val));
+            scores.push(isActive ? Math.round(val) : null);
+            sig += (Math.random() - 0.5) * 2;
+            sig = Math.max(-75, Math.min(-30, sig));
+            signal.push(Math.round(sig));
+            tp = isActive ? Math.max(0, tp + (Math.random() - 0.4) * 20) : 0;
+            throughput.push(Math.round(tp * 10) / 10);
+            rt = isActive ? Math.max(0, Math.min(60, rt + (Math.random() - 0.5) * 4)) : 0;
+            retrans.push(Math.round(rt * 10) / 10);
+        }
+        const result = { scores, signal, throughput, retrans, times };
+        chDetailCache[mac] = result;
+        return result;
+    }
+
+    // Real netdata fetch
+    const qoeUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.qoe.${mac}&after=-86400&points=1440&format=json`;
+    const qoeData = await chFetchJson(qoeUrl, 10000);
+
+    const sigUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.signal_quality.${mac}&after=-86400&points=1440&format=json`;
+    const sigData = await chFetchJson(sigUrl, 10000);
+
+    const retUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.retrans_rate.${mac}&after=-86400&points=1440&format=json`;
+    const retData = await chFetchJson(retUrl, 10000);
+
+    const tpUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.throughput_l2.${mac}&after=-86400&points=1440&format=json`;
+    const tpData = await chFetchJson(tpUrl, 10000);
+
+    const parse = (d, idx) => d?.data ? [...d.data].reverse().map(r => r[idx]) : null;
+    const parseTimes = d => d?.data ? [...d.data].reverse().map(r => r[0]) : null;
+
+    const result = {
+        scores: parse(qoeData, 1),       // score
+        signal: parse(sigData, 1),        // rx_signal
+        throughput: parse(tpData, 1),     // download
+        retrans: parse(retData, 1),       // retrans (may be from column index 1 or 2 depending on chart)
+        times: parseTimes(qoeData) || parseTimes(sigData) || [],
+    };
+    chDetailCache[mac] = result;
+    return result;
+}
+
+function renderDetailCharts(drawer, detail, name, band) {
+    const chartsDiv = drawer.querySelector('.ch-detail-charts');
+    if (!chartsDiv) return;
+
+    const charts = [
+        { title: 'QoE Score', data: detail.scores, color: null, isQoE: true, unit: '', yMin: 0, yMax: 100 },
+        { title: 'Signal (dBm)', data: detail.signal, color: 'var(--accent-cyan)', unit: ' dBm', yMin: -80, yMax: -20 },
+        { title: 'Throughput (Mbps)', data: detail.throughput, color: 'var(--accent-green)', unit: ' Mbps', yMin: 0 },
+        { title: 'Retransmission (%)', data: detail.retrans, color: 'var(--accent-amber)', unit: ' %', yMin: 0, yMax: 60 },
+    ];
+
+    let html = '';
+    charts.forEach((chart, ci) => {
+        const { svgStr, computedMin, computedMax } = renderMiniChart(chart);
+        // Y-axis labels as HTML overlay
+        let yLabels = '';
+        if (computedMin !== undefined) {
+            const fmt = v => Number.isInteger(v) ? v : v.toFixed(0);
+            yLabels = `<span class="ch-detail-y-label" style="top:2px">${fmt(computedMax)}</span>
+                       <span class="ch-detail-y-label" style="bottom:0">${fmt(computedMin)}</span>`;
+        }
+        html += `<div class="ch-detail-chart" data-chart-idx="${ci}">
+            <div class="ch-detail-chart-title">${chart.title}</div>
+            <div class="ch-detail-chart-body">${yLabels}${svgStr}</div>
+        </div>`;
+    });
+    chartsDiv.innerHTML = html;
+
+    // Hover tooltips + crosshair
+    const miniW = 300, miniH = 80, miniPAD = 4;
+    const miniPlotW = miniW - miniPAD * 2, miniPlotH = miniH - miniPAD * 2;
+
+    chartsDiv.querySelectorAll('.ch-detail-chart-body').forEach(body => {
+        const svgEl = body.querySelector('svg');
+        const crossLine = svgEl?.querySelector('.ch-mini-cross-line');
+        // HTML dot (SVG circles distort)
+        const hDot = document.createElement('div');
+        hDot.style.cssText = 'display:none;position:absolute;width:6px;height:6px;border-radius:50%;pointer-events:none;z-index:3;transform:translate(-50%,-50%);box-shadow:0 0 3px currentColor';
+        body.appendChild(hDot);
+
+        body.addEventListener('mousemove', e => {
+            const ci = parseInt(body.parentElement.dataset.chartIdx);
+            const chart = charts[ci];
+            if (!chart?.data?.length || !svgEl) return;
+            const svgRect = svgEl.getBoundingClientRect();
+            const svgXFrac = Math.max(0, Math.min(1, (e.clientX - svgRect.left) / svgRect.width));
+            const idx = Math.min(chart.data.length - 1, Math.floor(svgXFrac * chart.data.length));
+            const val = chart.data[idx];
+            const t = detail.times?.[idx];
+            const timeStr = t ? new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            const valStr = val !== null && val !== undefined ? `${Math.round(val * 10) / 10}${chart.unit}` : 'No data';
+            chShowTooltip(e, `<b>${timeStr}</b> ${chart.title}: ${valStr}`);
+
+            // SVG crosshair line
+            const dataX = miniPAD + (idx / (chart.data.length - 1)) * miniPlotW;
+            if (crossLine) {
+                crossLine.setAttribute('x1', dataX);
+                crossLine.setAttribute('x2', dataX);
+                crossLine.setAttribute('display', '');
+            }
+
+            // HTML dot via getScreenCTM
+            if (val !== null && val !== undefined) {
+                const cMin = chart.yMin ?? Math.min(...chart.data.filter(v => v !== null));
+                const cMax = chart.yMax ?? Math.max(...chart.data.filter(v => v !== null));
+                const range = cMax - cMin || 1;
+                const dataY = miniPAD + miniPlotH - ((val - cMin) / range) * miniPlotH;
+                const ctm = svgEl.getScreenCTM();
+                if (ctm) {
+                    const screenX = ctm.a * dataX + ctm.e;
+                    const screenY = ctm.d * dataY + ctm.f;
+                    const bodyRect = body.getBoundingClientRect();
+                    const dotColor = chart.isQoE
+                        ? (val >= 70 ? 'rgba(45,206,137,1)' : val >= 40 ? 'rgba(251,175,64,1)' : 'rgba(255,69,58,1)')
+                        : chart.color === 'var(--accent-cyan)' ? 'rgba(0,210,190,1)'
+                        : chart.color === 'var(--accent-green)' ? 'rgba(0,210,100,1)'
+                        : chart.color === 'var(--accent-amber)' ? 'rgba(245,158,11,1)'
+                        : 'white';
+                    hDot.style.display = '';
+                    hDot.style.left = (screenX - bodyRect.left) + 'px';
+                    hDot.style.top = (screenY - bodyRect.top) + 'px';
+                    hDot.style.background = dotColor;
+                    hDot.style.color = dotColor;
+                }
+            } else {
+                hDot.style.display = 'none';
+            }
+        });
+        body.addEventListener('mouseleave', () => {
+            chHideTooltip();
+            if (crossLine) crossLine.setAttribute('display', 'none');
+            hDot.style.display = 'none';
+        });
+    });
+}
+
+function renderMiniChart({ data, color, isQoE, yMin, yMax }) {
+    if (!data || data.length === 0) return { svgStr: '<div class="ch-loading" style="font-size:9px">No data</div>' };
+
+    const W = 300, H = 80, PAD = 4;
+    const plotW = W - PAD * 2, plotH = H - PAD * 2;
+    const vals = data.map(v => v ?? null);
+    const nonNull = vals.filter(v => v !== null);
+    if (nonNull.length === 0) return { svgStr: '<div class="ch-loading" style="font-size:9px">No data</div>' };
+
+    const min = yMin ?? Math.min(...nonNull);
+    const max = yMax ?? Math.max(...nonNull);
+    const range = max - min || 1;
+    const x = i => PAD + (i / (vals.length - 1)) * plotW;
+    const y = v => PAD + plotH - ((v - min) / range) * plotH;
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
+
+    // Axis lines
+    svg += `<line x1="${PAD}" y1="${H - PAD}" x2="${W - PAD}" y2="${H - PAD}" stroke="rgba(255,255,255,0.12)" stroke-width="0.5"/>`;
+    svg += `<line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H - PAD}" stroke="rgba(255,255,255,0.12)" stroke-width="0.5"/>`;
+
+    if (isQoE) {
+        // Zone-colored QoE chart
+        const zones = [
+            { min: 70, fill: 'rgba(45,206,137,0.15)', stroke: 'rgba(45,206,137,0.8)' },
+            { min: 40, fill: 'rgba(251,175,64,0.15)', stroke: 'rgba(251,175,64,0.8)' },
+            { min: 0,  fill: 'rgba(255,69,58,0.15)',  stroke: 'rgba(255,69,58,0.8)' },
+        ];
+        // Draw threshold lines
+        [70, 40].forEach(t => {
+            const ty = y(t);
+            svg += `<line x1="${PAD}" y1="${ty}" x2="${W - PAD}" y2="${ty}" stroke="rgba(255,255,255,0.08)" stroke-width="0.5" stroke-dasharray="3,3"/>`;
+        });
+        // Draw colored segments
+        let segStart = null;
+        let segZone = -1;
+        const flush = (start, end, zone) => {
+            if (start === null || start >= end) return;
+            const z = zones[zone] || zones[2];
+            let fill = `M${x(start)},${y(0)}`;
+            let line = `M${x(start)},${y(vals[start])}`;
+            for (let j = start; j <= end; j++) {
+                if (vals[j] === null) continue;
+                fill += ` L${x(j)},${y(vals[j])}`;
+                line += ` L${x(j)},${y(vals[j])}`;
+            }
+            fill += ` L${x(end)},${y(0)}Z`;
+            svg += `<path d="${fill}" fill="${z.fill}"/>`;
+            svg += `<path d="${line}" fill="none" stroke="${z.stroke}" stroke-width="1.2"/>`;
+        };
+        for (let i = 0; i < vals.length; i++) {
+            if (vals[i] === null) { flush(segStart, i - 1, segZone); segStart = null; continue; }
+            const z = vals[i] >= 70 ? 0 : vals[i] >= 40 ? 1 : 2;
+            if (z !== segZone && segStart !== null) { flush(segStart, i - 1, segZone); segStart = i; }
+            if (segStart === null) segStart = i;
+            segZone = z;
+        }
+        flush(segStart, vals.length - 1, segZone);
+    } else {
+        // Simple line chart
+        let path = '';
+        let areaPath = '';
+        let started = false;
+        for (let i = 0; i < vals.length; i++) {
+            if (vals[i] === null) { started = false; continue; }
+            if (!started) {
+                path += `M${x(i)},${y(vals[i])}`;
+                areaPath += `M${x(i)},${y(min)} L${x(i)},${y(vals[i])}`;
+                started = true;
+            } else {
+                path += ` L${x(i)},${y(vals[i])}`;
+                areaPath += ` L${x(i)},${y(vals[i])}`;
+            }
+        }
+        // Close area
+        for (let i = vals.length - 1; i >= 0; i--) {
+            if (vals[i] !== null) { areaPath += ` L${x(i)},${y(min)}Z`; break; }
+        }
+        const fillColor = color ? color.replace(')', ',0.12)').replace('var(', '').replace(')', '') : 'rgba(255,255,255,0.05)';
+        // Use a simpler approach for fill
+        svg += `<path d="${areaPath}" fill="${color === 'var(--accent-cyan)' ? 'rgba(0,210,190,0.1)' :
+                    color === 'var(--accent-green)' ? 'rgba(0,210,100,0.1)' :
+                    color === 'var(--accent-amber)' ? 'rgba(245,158,11,0.1)' : 'rgba(255,255,255,0.05)'}"/>`;
+        svg += `<path d="${path}" fill="none" stroke="${color || 'var(--text-secondary)'}" stroke-width="1.2"/>`;
+    }
+
+    // Crosshair elements inside SVG
+    svg += `<line class="ch-mini-cross-line" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="0.5" display="none"/>`;
+    svg += `<circle class="ch-mini-cross-dot" cx="0" cy="0" r="3" fill="white" stroke="rgba(0,0,0,0.4)" stroke-width="0.5" display="none"/>`;
+    svg += '</svg>';
+    return { svgStr: svg, computedMin: min, computedMax: max };
+}
+
+function closeDetailDrawer() {
+    chSelectedMac = null;
+    const drawer = document.getElementById('chDetailDrawer');
+    drawer.classList.remove('open');
+    document.querySelectorAll('.ch-row.ch-row-selected').forEach(r => r.classList.remove('ch-row-selected'));
+}
+
+// ── Init & Events ──
+async function initClientHistory(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && chCachedHeatmap && (now - chLastFetchTime) < CH_CACHE_TTL) {
+        // Re-render from cache
+        renderNetworkPulse(document.getElementById('chPulseHeader'), chCachedHeatmap);
+        renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+        return;
+    }
+
+    const grid = document.getElementById('chHeatmapGrid');
+    const pulse = document.getElementById('chPulseHeader');
+    grid.innerHTML = '<div class="ch-loading">Fetching client history</div>';
+    pulse.innerHTML = '';
+
+    // Try real netdata
+    chUsingMock = false;
+    const clients = await chDiscoverClients();
+    const badge = document.getElementById('chDataBadge');
+
+    if (clients && clients.length > 0) {
+        chCachedClients = clients;
+        chCachedHeatmap = await chFetchHeatmapData(clients);
+        if (badge) badge.style.display = 'none';
+    } else {
+        // Fallback to mock
+        chUsingMock = true;
+        chCachedHeatmap = chGenerateMockData();
+        if (badge) { badge.style.display = ''; badge.textContent = 'MOCK DATA'; }
+    }
+
+    chLastFetchTime = Date.now();
+    chDetailCache = {};
+    renderNetworkPulse(pulse, chCachedHeatmap);
+    renderHeatmapGrid(grid, chCachedHeatmap);
+}
+
+function bindClientHistoryEvents() {
+    const grid = document.getElementById('chHeatmapGrid');
+    if (!grid) return;
+
+    // Row click → detail drawer
+    grid.addEventListener('click', e => {
+        const row = e.target.closest('.ch-row');
+        if (row?.dataset.mac) openDetailDrawer(row.dataset.mac);
+    });
+
+    // Cell hover → tooltip
+    grid.addEventListener('mouseover', e => {
+        if (!e.target.classList.contains('ch-cell')) return;
+        const time = e.target.dataset.time;
+        const score = e.target.dataset.score;
+        const active = e.target.dataset.active === 'true';
+        if (!time) return;
+        const status = active ? `QoE: ${Math.round(parseFloat(score))}` : 'Idle';
+        chShowTooltip(e, `${time} — ${status}`);
+    });
+    grid.addEventListener('mouseout', e => {
+        if (e.target.classList.contains('ch-cell')) chHideTooltip();
+    });
+    grid.addEventListener('mousemove', e => {
+        if (e.target.classList.contains('ch-cell') && chTooltipEl) {
+            chTooltipEl.style.left = (e.clientX + 12) + 'px';
+            chTooltipEl.style.top = (e.clientY - 30) + 'px';
+        }
+    });
+
+    // Refresh button
+    document.getElementById('chRefresh')?.addEventListener('click', () => initClientHistory(true));
+
+    // Escape to close drawer
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && chSelectedMac) closeDetailDrawer();
+    });
+
+    // Band filter (simple standalone, not coupled to clientsFilters)
+    const bfContainer = document.getElementById('chBandFilter');
+    if (bfContainer) {
+        const label = bfContainer.dataset.label || 'Band';
+        const opts = [{ value: '6 GHz', text: '6 GHz' }, { value: '5 GHz', text: '5 GHz' }, { value: '2.4 GHz', text: '2.4 GHz' }];
+        const btn = document.createElement('div');
+        btn.className = 'cf-multi-btn';
+        btn.textContent = `All ${label}`;
+        const menu = document.createElement('div');
+        menu.className = 'cf-multi-menu';
+        opts.forEach(o => {
+            const item = document.createElement('label');
+            item.className = 'cf-multi-item';
+            item.innerHTML = `<input type="checkbox" value="${o.value}"> ${o.text}`;
+            menu.appendChild(item);
+        });
+        bfContainer.appendChild(btn);
+        bfContainer.appendChild(menu);
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            document.querySelectorAll('.cf-multi.open').forEach(m => { if (m !== bfContainer) m.classList.remove('open'); });
+            bfContainer.classList.toggle('open');
+        });
+        menu.addEventListener('change', () => {
+            chBandFilter.clear();
+            menu.querySelectorAll('input:checked').forEach(cb => chBandFilter.add(cb.value));
+            btn.textContent = chBandFilter.size === 0 ? `All ${label}` : [...chBandFilter].join(', ');
+            if (chCachedHeatmap) {
+                renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+            }
+        });
+        document.addEventListener('click', () => bfContainer.classList.remove('open'));
+    }
+}
+
 // ── Init ───────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     init();
     bindTimeMachineEvents();
     bindClientsEvents();
+    bindClientHistoryEvents();
     // Auto-switch view via URL param (e.g., ?view=clients)
     const urlView = new URLSearchParams(location.search).get('view');
     if (urlView) switchView(urlView);
