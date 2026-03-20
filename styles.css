@@ -2474,6 +2474,33 @@ body {
 }
 .ch-refresh-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
 
+/* Zoom bar */
+.ch-zoom-bar {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.ch-zoom-btn {
+    background: none;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+.ch-zoom-btn:last-child { border-right: none; }
+.ch-zoom-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.04); }
+.ch-zoom-btn.active {
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.08);
+}
+
 /* Network Pulse header */
 .ch-pulse-header {
     height: 122px;
@@ -2521,7 +2548,7 @@ body {
 
 .ch-time-axis {
     display: grid;
-    grid-template-columns: 160px repeat(96, 1fr);
+    grid-template-columns: 160px repeat(96, 1fr); /* overridden by inline style per zoom */
     gap: 2px;
     padding: 6px 16px 2px;
     position: sticky;
@@ -2536,7 +2563,7 @@ body {
 
 .ch-row {
     display: grid;
-    grid-template-columns: 160px repeat(96, 1fr);
+    grid-template-columns: 160px repeat(96, 1fr); /* overridden by inline style per zoom */
     gap: 2px;
     align-items: center;
     cursor: pointer;

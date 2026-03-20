@@ -3952,10 +3952,22 @@ function parseTopologyJson(raw) {
 
 // ── Client History ──────────────────────────────────
 const CH_NETDATA_BASE = 'http://192.168.0.1:19999';
-const CH_BUCKETS = 96;           // 15-min buckets over 24h
+const CH_BASE_BUCKET = 60;       // 1-min base resolution
+const CH_BASE_BUCKETS = 10080;   // 7 days at 1-min resolution
 const CH_CACHE_TTL = 5 * 60000;  // 5 minutes
+
+const CH_ZOOM_LEVELS = [
+    { key: '1h',  label: '1H',  window: 3600,   bucket: 60,   cols: 60,  timeStep: 600,   timeFmt: 'HH:mm' },
+    { key: '12h', label: '12H', window: 43200,   bucket: 900,  cols: 48,  timeStep: 7200,  timeFmt: 'HH:mm' },
+    { key: '1d',  label: '1D',  window: 86400,   bucket: 900,  cols: 96,  timeStep: 10800, timeFmt: 'HH:mm' },
+    { key: '3d',  label: '3D',  window: 259200,  bucket: 3600, cols: 72,  timeStep: 43200, timeFmt: 'ddd HH' },
+    { key: '7d',  label: '7D',  window: 604800,  bucket: 7200, cols: 84,  timeStep: 86400, timeFmt: 'ddd' },
+];
+
+let chZoomLevel = '1d';
 let chCachedClients = null;
-let chCachedHeatmap = null;
+let chCachedHeatmap = null;       // raw 7-day base data (Map<mac, rawEntry>)
+let chAggregatedView = null;      // aggregated for current zoom (Map<mac, entry>)
 let chLastFetchTime = 0;
 let chSelectedMac = null;
 let chTooltipEl = null;
@@ -4049,19 +4061,18 @@ async function chFetchHeatmapData(clients) {
     await Promise.all(clients.map(async (client) => {
         await acquire();
         try {
-            const url = `${CH_NETDATA_BASE}/api/v1/data?chart=${client.chartId}&after=-86400&points=${CH_BUCKETS}&format=json`;
+            // Fetch 7 days at 5-min resolution (2016 points)
+            const url = `${CH_NETDATA_BASE}/api/v1/data?chart=${client.chartId}&after=-604800&points=${CH_BASE_BUCKETS}&format=json`;
             const data = await chFetchJson(url, 8000);
             if (!data?.data) return;
-            // dims: [time, score, snr, retrans, phy, airtime, stab]
             const scores = [];
             const active = [];
             const times = [];
-            // netdata returns newest first, reverse for chronological
             const rows = [...data.data].reverse();
             rows.forEach(r => {
                 times.push(r[0]);
                 scores.push(r[1]);
-                active.push(r[3] !== null); // retrans non-null = active
+                active.push(r[3] !== null);
             });
             results.set(client.mac, {
                 scores, active, times,
@@ -4080,17 +4091,16 @@ async function chFetchHeatmapData(clients) {
 function chGenerateMockData() {
     const clients = TOPOLOGY.clients.filter(c => c.connection !== 'ethernet' && c.status !== 'offline');
     const results = new Map();
+    const now = Math.floor(Date.now() / 1000);
     clients.forEach(c => {
         const scores = [];
         const active = [];
         const times = [];
-        const now = Math.floor(Date.now() / 1000);
         let val = computeQoE ? computeQoE(c) : 75;
-        for (let i = 0; i < CH_BUCKETS; i++) {
-            const t = now - (CH_BUCKETS - i) * 900;
+        for (let i = 0; i < CH_BASE_BUCKETS; i++) {
+            const t = now - (CH_BASE_BUCKETS - i) * CH_BASE_BUCKET;
             times.push(t);
             const hour = new Date(t * 1000).getHours();
-            // Activity pattern based on device type
             let actProb = 0.3;
             if (c.type === 'streaming' || c.type === 'tv') actProb = hour >= 19 && hour <= 23 ? 0.9 : 0.1;
             else if (c.type === 'laptop' || c.type === 'desktop') actProb = hour >= 8 && hour <= 18 ? 0.8 : 0.1;
@@ -4117,6 +4127,92 @@ function chGenerateMockData() {
     return results;
 }
 
+// ── Zoom Aggregation ──
+function chGetZoom(key) {
+    return CH_ZOOM_LEVELS.find(z => z.key === key) || CH_ZOOM_LEVELS[2]; // default 1d
+}
+
+function chAggregateForZoom(rawMap, zoomKey) {
+    const zoom = chGetZoom(zoomKey);
+    const now = Math.floor(Date.now() / 1000);
+    const windowStart = now - zoom.window;
+    const aggRatio = zoom.bucket / CH_BASE_BUCKET; // how many base buckets per display bucket
+    const result = new Map();
+
+    for (const [mac, raw] of rawMap) {
+        // Find indices within the window
+        let startIdx = 0;
+        for (let i = 0; i < raw.times.length; i++) {
+            if (raw.times[i] >= windowStart) { startIdx = i; break; }
+        }
+        const windowTimes = raw.times.slice(startIdx);
+        const windowScores = raw.scores.slice(startIdx);
+        const windowActive = raw.active.slice(startIdx);
+
+        const scores = [];
+        const active = [];
+        const times = [];
+
+        for (let b = 0; b < zoom.cols; b++) {
+            const from = b * aggRatio;
+            const to = Math.min((b + 1) * aggRatio, windowTimes.length);
+            let sumScore = 0, countActive = 0, anyActive = false;
+            for (let j = from; j < to; j++) {
+                if (windowActive[j]) {
+                    anyActive = true;
+                    if (windowScores[j] !== null && windowScores[j] !== undefined) {
+                        sumScore += windowScores[j];
+                        countActive++;
+                    }
+                }
+            }
+            const midIdx = Math.floor((from + to) / 2);
+            times.push(windowTimes[midIdx] || (windowStart + (b + 0.5) * zoom.bucket));
+            active.push(anyActive);
+            scores.push(countActive > 0 ? Math.round(sumScore / countActive) : (anyActive ? null : null));
+        }
+
+        result.set(mac, {
+            scores, active, times,
+            band: raw.band,
+            hostname: raw.hostname,
+            mac: raw.mac,
+            totalActive: active.filter(Boolean).length,
+            avgScore: scores.filter((s, i) => active[i] && s !== null).reduce((a, b) => a + b, 0) /
+                       (scores.filter((s, i) => active[i] && s !== null).length || 1),
+        });
+    }
+    return result;
+}
+
+function chFormatZoomTime(ts, zoomKey) {
+    const d = new Date(ts * 1000);
+    const zoom = chGetZoom(zoomKey);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const day = days[d.getDay()];
+    if (zoom.timeFmt === 'ddd') return day;
+    if (zoom.timeFmt === 'ddd HH') return `${day} ${hh}:00`;
+    return `${hh}:${mm}`;
+}
+
+function chGetTimeAxisLabels(zoomKey, firstTime) {
+    const zoom = chGetZoom(zoomKey);
+    const now = Math.floor(Date.now() / 1000);
+    const windowStart = now - zoom.window;
+    const labels = [];
+    // Snap to next clean boundary
+    const snap = Math.ceil(windowStart / zoom.timeStep) * zoom.timeStep;
+    for (let t = snap; t <= now; t += zoom.timeStep) {
+        const pct = (t - windowStart) / zoom.window;
+        if (pct >= 0 && pct <= 1) {
+            labels.push({ time: chFormatZoomTime(t, zoomKey), pct });
+        }
+    }
+    return labels;
+}
+
 // ── Network Pulse SVG ──
 // Pulse band colors — match Map legend: 6G=purple, 5G=cyan, 2.4G=amber
 const CH_BAND_FILLS = { '6G': 'rgba(168,85,247,0.55)', '5G': 'rgba(0,210,190,0.55)',  '2G': 'rgba(245,158,11,0.50)' };
@@ -4125,28 +4221,29 @@ const CH_BAND_LABELS = { '6G': '6 GHz', '5G': '5 GHz', '2G': '2.4 GHz' };
 let chPulseCounts = null; // cached for tooltip
 
 function renderNetworkPulse(container, heatmapData) {
+    const zoom = chGetZoom(chZoomLevel);
+    const numCols = zoom.cols;
     const W = 1400, H = 72, PAD_L = 0, PAD_R = 0, PAD_T = 2, PAD_B = 2;
     const plotW = W - PAD_L - PAD_R;
     const plotH = H - PAD_T - PAD_B;
 
     const bands = ['6G', '5G', '2G'];
-    const counts = bands.map(() => new Array(CH_BUCKETS).fill(0));
+    const counts = bands.map(() => new Array(numCols).fill(0));
     let maxCount = 1;
-    // Collect first timestamp for time display
     let firstTimestamp = null;
     for (const [, d] of heatmapData) {
         if (!firstTimestamp && d.times?.length) firstTimestamp = d.times[0];
         const b = (d.band || '').toUpperCase();
         let idx = b.includes('6') ? 0 : b.includes('5') ? 1 : 2;
-        for (let i = 0; i < CH_BUCKETS; i++) {
+        for (let i = 0; i < Math.min(numCols, d.active.length); i++) {
             if (d.active[i]) counts[idx][i]++;
         }
     }
-    chPulseCounts = { bands, counts, firstTimestamp };
+    chPulseCounts = { bands, counts, firstTimestamp, numCols, zoom };
 
     const stacked = bands.map((_, bi) => {
-        const row = new Array(CH_BUCKETS);
-        for (let i = 0; i < CH_BUCKETS; i++) {
+        const row = new Array(numCols);
+        for (let i = 0; i < numCols; i++) {
             let sum = 0;
             for (let j = 0; j <= bi; j++) sum += counts[j][i];
             row[i] = sum;
@@ -4155,37 +4252,39 @@ function renderNetworkPulse(container, heatmapData) {
     });
     for (const s of stacked[stacked.length - 1]) if (s > maxCount) maxCount = s;
 
-    const x = i => PAD_L + (i / (CH_BUCKETS - 1)) * plotW;
+    const x = i => PAD_L + (i / (numCols - 1)) * plotW;
     const y = v => PAD_T + plotH - (v / maxCount) * plotH;
 
     let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" style="display:block">`;
 
-    // Grid lines
     for (let g = 0; g <= maxCount; g += Math.max(1, Math.ceil(maxCount / 4))) {
         svg += `<line x1="0" y1="${y(g)}" x2="${W}" y2="${y(g)}" stroke="rgba(255,255,255,0.04)" stroke-width="0.5"/>`;
     }
 
-    // Stacked areas (bottom-up)
     for (let bi = bands.length - 1; bi >= 0; bi--) {
         const top = stacked[bi];
-        const bottom = bi > 0 ? stacked[bi - 1] : new Array(CH_BUCKETS).fill(0);
+        const bottom = bi > 0 ? stacked[bi - 1] : new Array(numCols).fill(0);
         let path = `M${x(0)},${y(top[0])}`;
-        for (let i = 1; i < CH_BUCKETS; i++) path += ` L${x(i)},${y(top[i])}`;
-        for (let i = CH_BUCKETS - 1; i >= 0; i--) path += ` L${x(i)},${y(bottom[i])}`;
+        for (let i = 1; i < numCols; i++) path += ` L${x(i)},${y(top[i])}`;
+        for (let i = numCols - 1; i >= 0; i--) path += ` L${x(i)},${y(bottom[i])}`;
         path += 'Z';
         svg += `<path d="${path}" fill="${CH_BAND_FILLS[bands[bi]]}" stroke="${CH_BAND_STROKES[bands[bi]]}" stroke-width="1"/>`;
     }
 
-    // Crosshair line inside SVG (vertical lines render fine with preserveAspectRatio="none")
     svg += `<line id="chPulseCrossLine" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="1" display="none"/>`;
     svg += '</svg>';
 
-    // Y-axis labels as HTML (won't distort)
     const yLabels = [];
     for (let g = 0; g <= maxCount; g += Math.max(1, Math.ceil(maxCount / 4))) {
         const pct = 100 - ((g / maxCount) * 100);
         yLabels.push(`<span style="position:absolute;left:2px;top:${pct}%;transform:translateY(-50%);font-size:9px;font-family:var(--font-mono);color:var(--text-muted)">${g}</span>`);
     }
+
+    // Dynamic time axis labels based on zoom
+    const timeLabels = chGetTimeAxisLabels(chZoomLevel);
+    const timeLabelHtml = timeLabels.map(l =>
+        `<span style="position:absolute;left:${(l.pct * 100).toFixed(1)}%;transform:translateX(-50%)">${l.time}</span>`
+    ).join('');
 
     container.innerHTML = `
         <div class="ch-pulse-label">Active Clients</div>
@@ -4195,16 +4294,13 @@ function renderNetworkPulse(container, heatmapData) {
             <span><span class="ch-pulse-legend-dot" style="background:${CH_BAND_FILLS['2G']}"></span>2.4 GHz</span>
         </div>
         <div class="ch-pulse-chart" style="position:relative;padding-left:18px">${yLabels.join('')}${svg}
-            <div class="ch-pulse-times">${[0,3,6,9,12,15,18,21,24].map(h =>
-                `<span>${String(h).padStart(2,'0')}:00</span>`).join('')}
-            </div>
+            <div class="ch-pulse-times" style="position:relative;height:14px">${timeLabelHtml}</div>
         </div>`;
 
     // Crosshair + tooltip
     const chartDiv = container.querySelector('.ch-pulse-chart');
     const svgEl = chartDiv.querySelector('svg');
     const crossLine = svgEl?.querySelector('#chPulseCrossLine');
-    // HTML dot (SVG circles distort with preserveAspectRatio="none")
     const pDot = document.createElement('div');
     pDot.className = 'ch-crosshair-dot';
     pDot.style.cssText = 'display:none;position:absolute;width:7px;height:7px;border-radius:50%;background:white;box-shadow:0 0 4px rgba(255,255,255,0.6);pointer-events:none;z-index:3;transform:translate(-50%,-50%)';
@@ -4214,19 +4310,20 @@ function renderNetworkPulse(container, heatmapData) {
         if (!svgEl) return;
         const svgRect = svgEl.getBoundingClientRect();
         const svgXFrac = (e.clientX - svgRect.left) / svgRect.width;
-        const idx = Math.min(CH_BUCKETS - 1, Math.max(0, Math.floor(svgXFrac * CH_BUCKETS)));
+        const idx = Math.min(numCols - 1, Math.max(0, Math.floor(svgXFrac * numCols)));
         if (!chPulseCounts) return;
-        const { bands: b, counts: c, firstTimestamp } = chPulseCounts;
-        const t = firstTimestamp ? new Date((firstTimestamp + idx * 900) * 1000) : null;
-        const timeStr = t ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const { bands: b, counts: c } = chPulseCounts;
+        // Get time from aggregated data
+        const firstEntry = heatmapData.values().next().value;
+        const t = firstEntry?.times?.[idx] ? new Date(firstEntry.times[idx] * 1000) : null;
+        const timeStr = t ? chFormatZoomTime(Math.floor(t.getTime() / 1000), chZoomLevel) : '';
         const total = b.reduce((sum, _, bi) => sum + c[bi][idx], 0);
-        let html = `<b>${timeStr}</b> — ${total} active<br>`;
+        let html = `<b>${timeStr}</b>: ${total} active<br>`;
         b.forEach((band, bi) => {
             if (c[bi][idx] > 0) html += `<span style="color:${CH_BAND_STROKES[band]}">${CH_BAND_LABELS[band]}: ${c[bi][idx]}</span><br>`;
         });
         chShowTooltip(e, html);
 
-        // SVG crosshair line
         const dataX = x(idx);
         if (crossLine) {
             crossLine.setAttribute('x1', dataX);
@@ -4234,7 +4331,6 @@ function renderNetworkPulse(container, heatmapData) {
             crossLine.setAttribute('display', '');
         }
 
-        // HTML dot via getScreenCTM — converts SVG coords to screen coords accurately
         const topCount = stacked[stacked.length - 1][idx];
         const dataY = y(topCount);
         const ctm = svgEl.getScreenCTM();
@@ -4257,7 +4353,9 @@ function renderNetworkPulse(container, heatmapData) {
 
 // ── Heatmap Grid ──
 function renderHeatmapGrid(container, heatmapData) {
-    // Sort: most active first, then by avg QoE descending
+    const zoom = chGetZoom(chZoomLevel);
+    const numCols = zoom.cols;
+
     let entries = [...heatmapData.values()];
     if (chBandFilter.size > 0) {
         entries = entries.filter(d => {
@@ -4265,17 +4363,14 @@ function renderHeatmapGrid(container, heatmapData) {
             return chBandFilter.has(b);
         });
     }
-    const bandOrder = { '6G': 0, '5G': 1, '2G': 2 };
     const getBandIdx = d => {
         const b = (d.band || '').toUpperCase();
         return b.includes('6') ? 0 : b.includes('5') ? 1 : 2;
     };
-    // Find each client's device type from TOPOLOGY for type sort
     const getType = d => {
         const c = TOPOLOGY.clients.find(c => chMacClean(c.mac || c.id) === d.mac);
         return c?.type || 'unknown';
     };
-    // Find most recent active bucket index
     const lastActive = d => {
         for (let i = d.active.length - 1; i >= 0; i--) { if (d.active[i]) return i; }
         return -1;
@@ -4300,30 +4395,34 @@ function renderHeatmapGrid(container, heatmapData) {
             entries.sort((a, b) => b.totalActive - a.totalActive || b.avgScore - a.avgScore);
     }
 
-    // Time axis — place labels at correct grid columns
-    let html = '<div class="ch-time-axis" id="chTimeAxis"><div></div>';
-    for (let h = 0; h < 24; h += 3) {
-        const col = Math.round((h / 24) * 96) + 2; // +2 for 1-indexed grid + label column
-        html += `<div class="ch-time-label" style="grid-column:${col}">${String(h).padStart(2, '0')}:00</div>`;
-    }
+    const gridCols = `160px repeat(${numCols}, 1fr)`;
+
+    // Dynamic time axis labels
+    const timeLabels = chGetTimeAxisLabels(chZoomLevel);
+    let html = `<div class="ch-time-axis" id="chTimeAxis" style="grid-template-columns:${gridCols}"><div></div>`;
+    timeLabels.forEach(l => {
+        const col = Math.round(l.pct * numCols) + 2; // +2 for 1-indexed grid + label column
+        html += `<div class="ch-time-label" style="grid-column:${col}">${l.time}</div>`;
+    });
     html += '</div>';
 
     // Rows
     entries.forEach(d => {
-        html += `<div class="ch-row${chSelectedMac === d.mac ? ' ch-row-selected' : ''}" data-mac="${d.mac}">`;
+        html += `<div class="ch-row${chSelectedMac === d.mac ? ' ch-row-selected' : ''}" style="grid-template-columns:${gridCols}" data-mac="${d.mac}">`;
         html += `<div class="ch-row-label"><span class="ch-band-dot" style="background:${chBandColor(d.band)}"></span>${escapeHtml(d.hostname)}</div>`;
-        for (let i = 0; i < CH_BUCKETS; i++) {
+        const len = Math.min(numCols, d.scores.length);
+        for (let i = 0; i < len; i++) {
             const score = d.scores[i];
             const isActive = d.active[i];
             let cls = 'ch-cell-idle';
-            if (score === null || score === undefined) cls = 'ch-cell-nodata';
+            if (score === null || score === undefined) cls = isActive ? 'ch-cell-idle' : 'ch-cell-nodata';
             else if (isActive) {
                 if (score >= 70) cls = 'ch-cell-good';
                 else if (score >= 40) cls = 'ch-cell-fair';
                 else cls = 'ch-cell-poor';
             }
             const t = d.times[i];
-            const timeStr = t ? new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            const timeStr = t ? chFormatZoomTime(t, chZoomLevel) : '';
             html += `<div class="ch-cell ${cls}" data-idx="${i}" data-score="${score ?? ''}" data-active="${isActive}" data-time="${timeStr}"></div>`;
         }
         html += '</div>';
@@ -4386,22 +4485,38 @@ async function openDetailDrawer(mac) {
     renderDetailCharts(drawer, detail, name, band);
 }
 
-async function chFetchDetailData(mac) {
-    if (chDetailCache[mac]) return chDetailCache[mac];
+function chDetailWindow() {
+    // Detail drawer window: match zoom for short windows, cap at 24h for longer
+    const zoom = chGetZoom(chZoomLevel);
+    const windowSec = Math.min(zoom.window, 86400);
+    const points = Math.round(windowSec / 60); // 1-min resolution
+    return { windowSec, points };
+}
 
+async function chFetchDetailData(mac) {
+    const cacheKey = `${mac}_${chZoomLevel}`;
+    if (chDetailCache[cacheKey]) return chDetailCache[cacheKey];
+
+    const { windowSec, points } = chDetailWindow();
     const clientEntry = chCachedHeatmap?.get(mac);
     if (chUsingMock || clientEntry?.isMock) {
-        // Generate mock detail
         const d = clientEntry;
-        const points = 1440;
         const now = Math.floor(Date.now() / 1000);
         const scores = [], signal = [], throughput = [], retrans = [], times = [];
         let val = d?.avgScore || 75, sig = -45, tp = 0, rt = 5;
+        // Use raw base data activity to drive mock detail
+        const rawTimes = d?.times || [];
+        const rawActive = d?.active || [];
         for (let i = 0; i < points; i++) {
             const t = now - (points - i) * 60;
             times.push(t);
-            const hour = new Date(t * 1000).getHours();
-            const isActive = d ? d.active[Math.floor(i / 15)] : Math.random() > 0.5;
+            // Find matching base bucket for activity pattern
+            let isActive = Math.random() > 0.5;
+            if (rawTimes.length > 0) {
+                const baseIdx = rawTimes.findIndex(bt => bt >= t);
+                if (baseIdx >= 0 && baseIdx < rawActive.length) isActive = rawActive[baseIdx];
+                else if (rawActive.length > 0) isActive = rawActive[rawActive.length - 1];
+            }
             val += (Math.random() - 0.5) * 6;
             val = Math.max(15, Math.min(100, val));
             scores.push(isActive ? Math.round(val) : null);
@@ -4414,34 +4529,35 @@ async function chFetchDetailData(mac) {
             retrans.push(Math.round(rt * 10) / 10);
         }
         const result = { scores, signal, throughput, retrans, times };
-        chDetailCache[mac] = result;
+        chDetailCache[cacheKey] = result;
         return result;
     }
 
     // Real netdata fetch
-    const qoeUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.qoe.${mac}&after=-86400&points=1440&format=json`;
+    const afterSec = -windowSec;
+    const qoeUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.qoe.${mac}&after=${afterSec}&points=${points}&format=json`;
     const qoeData = await chFetchJson(qoeUrl, 10000);
 
-    const sigUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.signal_quality.${mac}&after=-86400&points=1440&format=json`;
+    const sigUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.signal_quality.${mac}&after=${afterSec}&points=${points}&format=json`;
     const sigData = await chFetchJson(sigUrl, 10000);
 
-    const retUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.retrans_rate.${mac}&after=-86400&points=1440&format=json`;
+    const retUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.retrans_rate.${mac}&after=${afterSec}&points=${points}&format=json`;
     const retData = await chFetchJson(retUrl, 10000);
 
-    const tpUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.throughput_l2.${mac}&after=-86400&points=1440&format=json`;
+    const tpUrl = `${CH_NETDATA_BASE}/api/v1/data?chart=clientdevice.throughput_l2.${mac}&after=${afterSec}&points=${points}&format=json`;
     const tpData = await chFetchJson(tpUrl, 10000);
 
     const parse = (d, idx) => d?.data ? [...d.data].reverse().map(r => r[idx]) : null;
     const parseTimes = d => d?.data ? [...d.data].reverse().map(r => r[0]) : null;
 
     const result = {
-        scores: parse(qoeData, 1),       // score
-        signal: parse(sigData, 1),        // rx_signal
-        throughput: parse(tpData, 1),     // download
-        retrans: parse(retData, 1),       // retrans (may be from column index 1 or 2 depending on chart)
+        scores: parse(qoeData, 1),
+        signal: parse(sigData, 1),
+        throughput: parse(tpData, 1),
+        retrans: parse(retData, 1),
         times: parseTimes(qoeData) || parseTimes(sigData) || [],
     };
-    chDetailCache[mac] = result;
+    chDetailCache[cacheKey] = result;
     return result;
 }
 
@@ -4466,17 +4582,18 @@ function renderDetailCharts(drawer, detail, name, band) {
             yLabels = `<span class="ch-detail-y-label" style="top:2px">${fmt(computedMax)}</span>
                        <span class="ch-detail-y-label" style="bottom:0">${fmt(computedMin)}</span>`;
         }
-        // Time labels snapped to top-of-hour at ~6h intervals
+        // Time labels adapt to zoom window
         const tArr = detail.times || [];
         const fmtH = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
         const timeSlots = [];
         if (tArr.length > 1) {
             const t0 = tArr[0], tN = tArr[tArr.length - 1];
             const span = tN - t0;
-            const step = 6 * 3600; // 6 hours
-            // First label at next top-of-hour after t0
-            const firstHour = Math.ceil(t0 / 3600) * 3600;
-            for (let t = firstHour; t <= tN; t += step) {
+            // Choose step based on span: 1h→10min, 12h→3h, 24h→6h
+            const step = span <= 3600 ? 600 : span <= 43200 ? 10800 : 21600;
+            const snapTo = step >= 3600 ? 3600 : 600;
+            const firstSnap = Math.ceil(t0 / snapTo) * snapTo;
+            for (let t = firstSnap; t <= tN; t += step) {
                 const pct = (t - t0) / span;
                 if (pct >= 0 && pct <= 1) timeSlots.push({ time: fmtH(t), pct });
             }
@@ -4665,9 +4782,7 @@ function closeDetailDrawer() {
 async function initClientHistory(forceRefresh = false) {
     const now = Date.now();
     if (!forceRefresh && chCachedHeatmap && (now - chLastFetchTime) < CH_CACHE_TTL) {
-        // Re-render from cache
-        renderNetworkPulse(document.getElementById('chPulseHeader'), chCachedHeatmap);
-        renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+        chRenderCurrentZoom();
         return;
     }
 
@@ -4684,7 +4799,6 @@ async function initClientHistory(forceRefresh = false) {
     if (clients && clients.length > 0) {
         chCachedClients = clients;
         chCachedHeatmap = await chFetchHeatmapData(clients);
-        // Fill in mock data for TOPOLOGY WiFi clients not found in netdata
         const realMacs = new Set(chCachedHeatmap.keys());
         const mockFill = chGenerateMockData();
         for (const [mac, data] of mockFill) {
@@ -4695,7 +4809,6 @@ async function initClientHistory(forceRefresh = false) {
         }
         if (badge) badge.style.display = 'none';
     } else {
-        // Fallback to all mock
         chUsingMock = true;
         chCachedHeatmap = chGenerateMockData();
         if (badge) { badge.style.display = ''; badge.textContent = 'MOCK DATA'; }
@@ -4703,8 +4816,60 @@ async function initClientHistory(forceRefresh = false) {
 
     chLastFetchTime = Date.now();
     chDetailCache = {};
-    renderNetworkPulse(pulse, chCachedHeatmap);
-    renderHeatmapGrid(grid, chCachedHeatmap);
+    chRenderCurrentZoom();
+}
+
+function chRenderCurrentZoom(animate = false) {
+    const grid = document.getElementById('chHeatmapGrid');
+    const pulse = document.getElementById('chPulseHeader');
+    if (!chCachedHeatmap || !grid || !pulse) return;
+
+    // Aggregate raw data for current zoom level
+    chAggregatedView = chAggregateForZoom(chCachedHeatmap, chZoomLevel);
+
+    if (animate) {
+        // Crossfade animation: clone current state, render new underneath, fade out clone
+        const gridClone = grid.cloneNode(true);
+        const pulseClone = pulse.cloneNode(true);
+        gridClone.style.position = 'absolute';
+        gridClone.style.top = '0';
+        gridClone.style.left = '0';
+        gridClone.style.right = '0';
+        gridClone.style.zIndex = '10';
+        gridClone.style.pointerEvents = 'none';
+        pulseClone.style.position = 'absolute';
+        pulseClone.style.top = '0';
+        pulseClone.style.left = '0';
+        pulseClone.style.right = '0';
+        pulseClone.style.zIndex = '10';
+        pulseClone.style.pointerEvents = 'none';
+        pulseClone.style.background = 'var(--bg-primary)';
+
+        const gridWrap = grid.parentElement;
+        const pulseParent = pulse.parentElement;
+        gridWrap.style.position = 'relative';
+        pulseParent.style.position = 'relative';
+        gridWrap.appendChild(gridClone);
+        pulse.parentElement.insertBefore(pulseClone, pulse.nextSibling);
+
+        // Render new content
+        renderNetworkPulse(pulse, chAggregatedView);
+        renderHeatmapGrid(grid, chAggregatedView);
+
+        // Fade out clones
+        gridClone.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, easing: 'ease-out' })
+            .onfinish = () => gridClone.remove();
+        pulseClone.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, easing: 'ease-out' })
+            .onfinish = () => pulseClone.remove();
+    } else {
+        renderNetworkPulse(pulse, chAggregatedView);
+        renderHeatmapGrid(grid, chAggregatedView);
+    }
+
+    // Update zoom bar active state
+    document.querySelectorAll('.ch-zoom-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.zoom === chZoomLevel);
+    });
 }
 
 function bindClientHistoryEvents() {
@@ -4785,10 +4950,18 @@ function bindClientHistoryEvents() {
             const label = sortOpts.find(o => o.value === chSortMode)?.text || 'Sort';
             sBtn.innerHTML = `<i class="ph-bold ph-sort-descending" style="margin-right:4px"></i> ${label}`;
             sortContainer.classList.remove('open');
-            if (chCachedHeatmap) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+            if (chAggregatedView) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chAggregatedView);
         });
         document.addEventListener('click', () => sortContainer.classList.remove('open'));
     }
+
+    // Zoom bar
+    document.getElementById('chZoomBar')?.addEventListener('click', e => {
+        const btn = e.target.closest('.ch-zoom-btn');
+        if (!btn || btn.dataset.zoom === chZoomLevel) return;
+        chZoomLevel = btn.dataset.zoom;
+        chRenderCurrentZoom(true);
+    });
 
     // Band filter (simple standalone, not coupled to clientsFilters)
     const bfContainer = document.getElementById('chBandFilter');
@@ -4819,7 +4992,7 @@ function bindClientHistoryEvents() {
             menu.querySelectorAll('input:checked').forEach(cb => chBandFilter.add(cb.value));
             btn.textContent = chBandFilter.size === 0 ? 'All Bands' : [...chBandFilter].join(', ');
             clearRow.style.display = chBandFilter.size > 0 ? '' : 'none';
-            if (chCachedHeatmap) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+            if (chAggregatedView) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chAggregatedView);
         };
 
         btn.addEventListener('click', e => {
