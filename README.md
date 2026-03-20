@@ -40,10 +40,21 @@ A real-time network topology visualization for Intellifi SmartOS mesh networks. 
 - **Event labels** - Roaming and band-change events shown as pulsing labels that follow elements during animation and freeze on pause
 - **Adjustable speed and interval** - 1x/2x/4x playback speed with configurable sample intervals (15s/30s/60s)
 
+### Client Activity History
+
+- **24-hour activity heatmap** - GitHub-contributions-style grid showing per-client WiFi activity across 96 time buckets (15-min intervals), color-coded by QoE score (green/amber/red/gray)
+- **Network Pulse header** - Stacked area chart showing total active clients over time, broken down by band (cyan for 6 GHz, purple for 5 GHz, amber for 2.4 GHz)
+- **Detail drawer** - Click any client row to expand a bottom panel with four mini charts: QoE sparkline, signal strength, throughput (DL/UL), and retransmission rate
+- **Interactive crosshairs** - Hover over any chart for precise time/value readouts using SVG coordinate mapping
+- **6 sort modes** - Sort clients by Most Active, Worst QoE, Recently Active, By Band, By Device Type, or Alphabetical via dropdown
+- **Band filter** - Filter heatmap rows by radio band (2.4 GHz, 5 GHz, 6 GHz)
+- **Real netdata integration** - Fetches live QoE data from SmartOS netdata API (`clientdevice.qoe.*` charts) with automatic client discovery
+- **Mock data fallback** - When netdata is unreachable, generates realistic mock data for all 71 clients with deterministic random walks
+
 ### General
 - **Dark/light theme** - Toggle between dark and light modes
-- **View switching** - Seamless transitions between Map, Clients, and Time Machine views via sidebar navigation
-- **URL parameter support** - Deep-link to views via `?view=clients` or `?view=time-machine`
+- **View switching** - Seamless transitions between Map, Clients, Time Machine, and Client History views via sidebar navigation
+- **URL parameter support** - Deep-link to views via `?view=clients`, `?view=time-machine`, or `?view=client-history`
 
 ## Architecture
 
@@ -52,7 +63,7 @@ Single-page app with no build step:
 | File | Purpose |
 |------|---------|
 | `index.html` | Shell markup, sidebar, top bar, SVG canvas, clients table, detail panel |
-| `app.js` | Layout engine, connection drawing, animations, view switching, table rendering, Time Machine |
+| `app.js` | Layout engine, connection drawing, animations, view switching, table rendering, Time Machine, Client History |
 | `styles.css` | All styling including dark/light themes, card designs, pill colors, table styles |
 
 ### Layout Engine
