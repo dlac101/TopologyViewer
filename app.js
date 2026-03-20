@@ -3962,6 +3962,7 @@ let chTooltipEl = null;
 let chDetailCache = {};
 let chBandFilter = new Set();
 let chUsingMock = false;
+let chSortMode = 'activity'; // 'activity' or 'qoe'
 
 function chMacClean(mac) { return mac.replace(/:/g, '').toUpperCase(); }
 function chMacFormat(clean) {
@@ -4193,7 +4194,11 @@ function renderNetworkPulse(container, heatmapData) {
             <span><span class="ch-pulse-legend-dot" style="background:${CH_BAND_FILLS['5G']}"></span>5 GHz</span>
             <span><span class="ch-pulse-legend-dot" style="background:${CH_BAND_FILLS['2G']}"></span>2.4 GHz</span>
         </div>
-        <div class="ch-pulse-chart" style="position:relative;padding-left:18px">${yLabels.join('')}${svg}</div>`;
+        <div class="ch-pulse-chart" style="position:relative;padding-left:18px">${yLabels.join('')}${svg}
+            <div class="ch-pulse-times">${[0,3,6,9,12,15,18,21,24].map(h =>
+                `<span>${String(h).padStart(2,'0')}:00</span>`).join('')}
+            </div>
+        </div>`;
 
     // Crosshair + tooltip
     const chartDiv = container.querySelector('.ch-pulse-chart');
@@ -4260,7 +4265,16 @@ function renderHeatmapGrid(container, heatmapData) {
             return chBandFilter.has(b);
         });
     }
-    entries.sort((a, b) => b.totalActive - a.totalActive || b.avgScore - a.avgScore);
+    if (chSortMode === 'qoe') {
+        // Worst QoE first (lowest avg score among active clients)
+        entries.sort((a, b) => {
+            const aScore = a.totalActive > 0 ? a.avgScore : 999;
+            const bScore = b.totalActive > 0 ? b.avgScore : 999;
+            return aScore - bScore || b.totalActive - a.totalActive;
+        });
+    } else {
+        entries.sort((a, b) => b.totalActive - a.totalActive || b.avgScore - a.avgScore);
+    }
 
     // Time axis — place labels at correct grid columns
     let html = '<div class="ch-time-axis" id="chTimeAxis"><div></div>';
@@ -4351,9 +4365,10 @@ async function openDetailDrawer(mac) {
 async function chFetchDetailData(mac) {
     if (chDetailCache[mac]) return chDetailCache[mac];
 
-    if (chUsingMock) {
+    const clientEntry = chCachedHeatmap?.get(mac);
+    if (chUsingMock || clientEntry?.isMock) {
         // Generate mock detail
-        const d = chCachedHeatmap?.get(mac);
+        const d = clientEntry;
         const points = 1440;
         const now = Math.floor(Date.now() / 1000);
         const scores = [], signal = [], throughput = [], retrans = [], times = [];
@@ -4427,9 +4442,29 @@ function renderDetailCharts(drawer, detail, name, band) {
             yLabels = `<span class="ch-detail-y-label" style="top:2px">${fmt(computedMax)}</span>
                        <span class="ch-detail-y-label" style="bottom:0">${fmt(computedMin)}</span>`;
         }
+        // Time labels snapped to top-of-hour at ~6h intervals
+        const tArr = detail.times || [];
+        const fmtH = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const timeSlots = [];
+        if (tArr.length > 1) {
+            const t0 = tArr[0], tN = tArr[tArr.length - 1];
+            const span = tN - t0;
+            const step = 6 * 3600; // 6 hours
+            // First label at next top-of-hour after t0
+            const firstHour = Math.ceil(t0 / 3600) * 3600;
+            for (let t = firstHour; t <= tN; t += step) {
+                const pct = (t - t0) / span;
+                if (pct >= 0 && pct <= 1) timeSlots.push({ time: fmtH(t), pct });
+            }
+        }
+        const timeLabelHtml = timeSlots.length > 0
+            ? `<div class="ch-detail-times">${timeSlots.map(s =>
+                `<span style="position:absolute;left:${(s.pct * 100).toFixed(1)}%;transform:translateX(-50%)">${s.time}</span>`).join('')}</div>`
+            : '';
         html += `<div class="ch-detail-chart" data-chart-idx="${ci}">
             <div class="ch-detail-chart-title">${chart.title}</div>
             <div class="ch-detail-chart-body">${yLabels}${svgStr}</div>
+            ${timeLabelHtml}
         </div>`;
     });
     chartsDiv.innerHTML = html;
@@ -4625,9 +4660,18 @@ async function initClientHistory(forceRefresh = false) {
     if (clients && clients.length > 0) {
         chCachedClients = clients;
         chCachedHeatmap = await chFetchHeatmapData(clients);
+        // Fill in mock data for TOPOLOGY WiFi clients not found in netdata
+        const realMacs = new Set(chCachedHeatmap.keys());
+        const mockFill = chGenerateMockData();
+        for (const [mac, data] of mockFill) {
+            if (!realMacs.has(mac)) {
+                data.isMock = true;
+                chCachedHeatmap.set(mac, data);
+            }
+        }
         if (badge) badge.style.display = 'none';
     } else {
-        // Fallback to mock
+        // Fallback to all mock
         chUsingMock = true;
         chCachedHeatmap = chGenerateMockData();
         if (badge) { badge.style.display = ''; badge.textContent = 'MOCK DATA'; }
@@ -4677,16 +4721,33 @@ function bindClientHistoryEvents() {
         if (e.key === 'Escape' && chSelectedMac) closeDetailDrawer();
     });
 
+    // Sort toggle
+    const sortBtn = document.getElementById('chSortToggle');
+    if (sortBtn) {
+        sortBtn.addEventListener('click', () => {
+            chSortMode = chSortMode === 'activity' ? 'qoe' : 'activity';
+            sortBtn.innerHTML = chSortMode === 'activity'
+                ? '<i class="ph-bold ph-sort-descending"></i> Most Active'
+                : '<i class="ph-bold ph-sort-ascending"></i> Worst QoE';
+            if (chCachedHeatmap) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+        });
+    }
+
     // Band filter (simple standalone, not coupled to clientsFilters)
     const bfContainer = document.getElementById('chBandFilter');
     if (bfContainer) {
-        const label = bfContainer.dataset.label || 'Band';
         const opts = [{ value: '6 GHz', text: '6 GHz' }, { value: '5 GHz', text: '5 GHz' }, { value: '2.4 GHz', text: '2.4 GHz' }];
         const btn = document.createElement('div');
         btn.className = 'cf-multi-btn';
-        btn.textContent = `All ${label}`;
+        btn.textContent = 'All Bands';
         const menu = document.createElement('div');
         menu.className = 'cf-multi-menu';
+        // Clear link
+        const clearRow = document.createElement('div');
+        clearRow.className = 'cf-multi-clear';
+        clearRow.textContent = 'Clear';
+        clearRow.style.display = 'none';
+        menu.appendChild(clearRow);
         opts.forEach(o => {
             const item = document.createElement('label');
             item.className = 'cf-multi-item';
@@ -4695,18 +4756,25 @@ function bindClientHistoryEvents() {
         });
         bfContainer.appendChild(btn);
         bfContainer.appendChild(menu);
+
+        const updateFilter = () => {
+            chBandFilter.clear();
+            menu.querySelectorAll('input:checked').forEach(cb => chBandFilter.add(cb.value));
+            btn.textContent = chBandFilter.size === 0 ? 'All Bands' : [...chBandFilter].join(', ');
+            clearRow.style.display = chBandFilter.size > 0 ? '' : 'none';
+            if (chCachedHeatmap) renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
+        };
+
         btn.addEventListener('click', e => {
             e.stopPropagation();
             document.querySelectorAll('.cf-multi.open').forEach(m => { if (m !== bfContainer) m.classList.remove('open'); });
             bfContainer.classList.toggle('open');
         });
-        menu.addEventListener('change', () => {
-            chBandFilter.clear();
-            menu.querySelectorAll('input:checked').forEach(cb => chBandFilter.add(cb.value));
-            btn.textContent = chBandFilter.size === 0 ? `All ${label}` : [...chBandFilter].join(', ');
-            if (chCachedHeatmap) {
-                renderHeatmapGrid(document.getElementById('chHeatmapGrid'), chCachedHeatmap);
-            }
+        menu.addEventListener('change', updateFilter);
+        clearRow.addEventListener('click', e => {
+            e.stopPropagation();
+            menu.querySelectorAll('input:checked').forEach(cb => { cb.checked = false; cb.closest('.cf-multi-item')?.classList.remove('checked'); });
+            updateFilter();
         });
         document.addEventListener('click', () => bfContainer.classList.remove('open'));
     }
