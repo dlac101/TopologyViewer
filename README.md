@@ -42,6 +42,10 @@ A real-time network topology visualization for Intellifi SmartOS mesh networks. 
 
 ### Client Activity History
 
+<img width="2560" height="1351" alt="ClientActivityHistory2" src="https://github.com/user-attachments/assets/c3291973-b4bc-4a53-8c71-9628b8c3f4d8" />
+<img width="2560" height="1351" alt="ClientActivityHistory1" src="https://github.com/user-attachments/assets/17653b49-cfc0-43e2-990b-b13c276cfdf2" />
+
+
 - **24-hour activity heatmap** - GitHub-contributions-style grid showing per-client WiFi activity across 96 time buckets (15-min intervals), color-coded by QoE score (green/amber/red/gray)
 - **Network Pulse header** - Stacked area chart showing total active clients over time, broken down by band (cyan for 6 GHz, purple for 5 GHz, amber for 2.4 GHz)
 - **Detail drawer** - Click any client row to expand a bottom panel with four mini charts: QoE sparkline, signal strength, throughput (DL/UL), and retransmission rate
