@@ -487,7 +487,7 @@ function renderQoESparklineSVG(history, width, height, opts = {}) {
     if (showThresholds) {
         [70, 40].forEach(t => {
             const ty = yFor(t);
-            svg += `<line x1="${pad}" y1="${ty}" x2="${width - pad}" y2="${ty}" stroke="rgba(255,255,255,0.12)" stroke-dasharray="3,2" stroke-width="0.5"/>`;
+            svg += `<line x1="${pad}" y1="${ty}" x2="${width - pad}" y2="${ty}" stroke="${canvasText(0.12)}" stroke-dasharray="3,2" stroke-width="0.5"/>`;
         });
     }
 
@@ -535,8 +535,8 @@ function renderQoESparklineSVG(history, width, height, opts = {}) {
     // Time labels
     if (showTimeLabels) {
         const labelY = totalH - 1;
-        svg += `<text x="${pad}" y="${labelY}" fill="rgba(255,255,255,0.35)" font-size="3" font-family="var(--font-mono, monospace)">60m ago</text>`;
-        svg += `<text x="${width - pad}" y="${labelY}" fill="rgba(255,255,255,0.35)" font-size="3" font-family="var(--font-mono, monospace)" text-anchor="end">now</text>`;
+        svg += `<text x="${pad}" y="${labelY}" fill="${canvasText(0.35)}" font-size="3" font-family="var(--font-mono, monospace)">60m ago</text>`;
+        svg += `<text x="${width - pad}" y="${labelY}" fill="${canvasText(0.35)}" font-size="3" font-family="var(--font-mono, monospace)" text-anchor="end">now</text>`;
     }
 
     svg += '</svg>';
@@ -2352,6 +2352,21 @@ function bindEvents() {
         const current = html.getAttribute('data-theme');
         html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
     });
+}
+
+// ── Theme-aware helpers ───────────────────────────
+function isDarkTheme() {
+    return document.documentElement.getAttribute('data-theme') !== 'light';
+}
+function canvasText(alpha) {
+    return isDarkTheme()
+        ? 'rgba(255,255,255,' + alpha + ')'
+        : 'rgba(0,0,0,' + alpha + ')';
+}
+function canvasCrosshair(alpha) {
+    return isDarkTheme()
+        ? 'rgba(255,255,255,' + alpha + ')'
+        : 'rgba(0,0,0,' + alpha + ')';
 }
 
 // ── Helpers ────────────────────────────────────────
@@ -4258,7 +4273,7 @@ function renderNetworkPulse(container, heatmapData) {
     let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" preserveAspectRatio="none" style="display:block">`;
 
     for (let g = 0; g <= maxCount; g += Math.max(1, Math.ceil(maxCount / 4))) {
-        svg += `<line x1="0" y1="${y(g)}" x2="${W}" y2="${y(g)}" stroke="rgba(255,255,255,0.04)" stroke-width="0.5"/>`;
+        svg += `<line x1="0" y1="${y(g)}" x2="${W}" y2="${y(g)}" stroke="${canvasText(0.04)}" stroke-width="0.5"/>`;
     }
 
     for (let bi = bands.length - 1; bi >= 0; bi--) {
@@ -4271,7 +4286,7 @@ function renderNetworkPulse(container, heatmapData) {
         svg += `<path d="${path}" fill="${CH_BAND_FILLS[bands[bi]]}" stroke="${CH_BAND_STROKES[bands[bi]]}" stroke-width="1"/>`;
     }
 
-    svg += `<line id="chPulseCrossLine" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="1" display="none"/>`;
+    svg += `<line id="chPulseCrossLine" x1="0" y1="0" x2="0" y2="${H}" stroke="${canvasCrosshair(0.3)}" stroke-width="1" display="none"/>`;
     svg += '</svg>';
 
     const yLabels = [];
@@ -4303,7 +4318,9 @@ function renderNetworkPulse(container, heatmapData) {
     const crossLine = svgEl?.querySelector('#chPulseCrossLine');
     const pDot = document.createElement('div');
     pDot.className = 'ch-crosshair-dot';
-    pDot.style.cssText = 'display:none;position:absolute;width:7px;height:7px;border-radius:50%;background:white;box-shadow:0 0 4px rgba(255,255,255,0.6);pointer-events:none;z-index:3;transform:translate(-50%,-50%)';
+    const dotBg = isDarkTheme() ? 'white' : '#1a2332';
+    const dotGlow = isDarkTheme() ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.3)';
+    pDot.style.cssText = 'display:none;position:absolute;width:7px;height:7px;border-radius:50%;background:' + dotBg + ';box-shadow:0 0 4px ' + dotGlow + ';pointer-events:none;z-index:3;transform:translate(-50%,-50%)';
     chartDiv.appendChild(pDot);
 
     chartDiv.addEventListener('mousemove', e => {
@@ -4696,8 +4713,8 @@ function renderMiniChart({ data, color, isQoE, yMin, yMax }) {
     let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
 
     // Axis lines
-    svg += `<line x1="${PAD}" y1="${H - PAD}" x2="${W - PAD}" y2="${H - PAD}" stroke="rgba(255,255,255,0.12)" stroke-width="0.5"/>`;
-    svg += `<line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H - PAD}" stroke="rgba(255,255,255,0.12)" stroke-width="0.5"/>`;
+    svg += `<line x1="${PAD}" y1="${H - PAD}" x2="${W - PAD}" y2="${H - PAD}" stroke="${canvasText(0.12)}" stroke-width="0.5"/>`;
+    svg += `<line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H - PAD}" stroke="${canvasText(0.12)}" stroke-width="0.5"/>`;
 
     if (isQoE) {
         // Zone-colored QoE chart
@@ -4709,7 +4726,7 @@ function renderMiniChart({ data, color, isQoE, yMin, yMax }) {
         // Draw threshold lines
         [70, 40].forEach(t => {
             const ty = y(t);
-            svg += `<line x1="${PAD}" y1="${ty}" x2="${W - PAD}" y2="${ty}" stroke="rgba(255,255,255,0.08)" stroke-width="0.5" stroke-dasharray="3,3"/>`;
+            svg += `<line x1="${PAD}" y1="${ty}" x2="${W - PAD}" y2="${ty}" stroke="${canvasText(0.08)}" stroke-width="0.5" stroke-dasharray="3,3"/>`;
         });
         // Draw colored segments
         let segStart = null;
@@ -4760,13 +4777,14 @@ function renderMiniChart({ data, color, isQoE, yMin, yMax }) {
         // Use a simpler approach for fill
         svg += `<path d="${areaPath}" fill="${color === 'var(--accent-cyan)' ? 'rgba(0,210,190,0.1)' :
                     color === 'var(--accent-green)' ? 'rgba(0,210,100,0.1)' :
-                    color === 'var(--accent-amber)' ? 'rgba(245,158,11,0.1)' : 'rgba(255,255,255,0.05)'}"/>`;
+                    color === 'var(--accent-amber)' ? 'rgba(245,158,11,0.1)' : canvasText(0.05)}"/>`;
         svg += `<path d="${path}" fill="none" stroke="${color || 'var(--text-secondary)'}" stroke-width="1.2"/>`;
     }
 
     // Crosshair elements inside SVG
-    svg += `<line class="ch-mini-cross-line" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="0.5" display="none"/>`;
-    svg += `<circle class="ch-mini-cross-dot" cx="0" cy="0" r="3" fill="white" stroke="rgba(0,0,0,0.4)" stroke-width="0.5" display="none"/>`;
+    svg += `<line class="ch-mini-cross-line" x1="0" y1="0" x2="0" y2="${H}" stroke="${canvasCrosshair(0.3)}" stroke-width="0.5" display="none"/>`;
+    const miniDotFill = isDarkTheme() ? 'white' : '#1a2332';
+    svg += `<circle class="ch-mini-cross-dot" cx="0" cy="0" r="3" fill="${miniDotFill}" stroke="rgba(0,0,0,0.4)" stroke-width="0.5" display="none"/>`;
     svg += '</svg>';
     return { svgStr: svg, computedMin: min, computedMax: max };
 }
