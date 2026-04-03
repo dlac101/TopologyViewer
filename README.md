@@ -53,10 +53,27 @@ A real-time network topology visualization for Intellifi SmartOS mesh networks. 
 - **Real netdata integration** - Fetches live QoE data from SmartOS netdata API (`clientdevice.qoe.*` charts) with automatic client discovery
 - **Mock data fallback** - When netdata is unreachable, generates realistic mock data for all 71 clients with deterministic random walks
 
+### Infrastructure Mode
+
+![Infrastructure Mode](screenshots/Infrastructure1.png)
+
+- **D3 hierarchical tree layout** - Gateway at top, satellites positioned below by parent-child backhaul relationships using `d3.tree()` and `d3.linkVertical()` curved connectors
+- **Signal quality coloring** - All wireless links colored by RSSI (green/lime/yellow/orange/red scale) with glow layers on active backhaul
+- **N x N signal matrix** - Sidebar heatmap grid showing asymmetric RSSI or QoE scores between every node pair, with QoE/RSSI toggle switch
+- **Rich hover tooltips** - 4-column table layout showing band, channel width, WiFi version, spatial streams, QoE/RSSI + SNR, channel + noise floor, max PHY rate, current TX/RX PHY rates with MCS indices, and airtime/utilization meter bars
+- **Click-to-focus** - Clicking a node highlights its connections and dims all others, suppressing tooltips and clicks on dimmed links
+- **Heard (available) links** - Dashed curved arcs between non-parent-child nodes showing passive signal observations, with smart bulge direction (inward for same-tier/skip-tier, outward for adjacent-tier)
+- **Link labels** - Two-tier pills on backhaul links (band/streams/channel width + status/QoE) and 75%-size labels on heard arcs
+- **Label collision avoidance** - Automatic nudging system prevents label overlap, seeded with node positions
+- **Link detail card** - Click any link or matrix cell for expanded forward/reverse RSSI with asymmetry indicator
+- **QoE scoring** - Computed from RSSI + SNR for wireless links, displayed on labels and in the signal matrix
+- **Model numbers on nodes** - Device model shown below hostname in matching subdued style
+- **Auto-open** - `?infra=1` URL parameter opens Infrastructure Mode on page load
+
 ### General
 - **Dark/light theme** - Toggle between dark and light modes
 - **View switching** - Seamless transitions between Map, Clients, Time Machine, and Client History views via sidebar navigation
-- **URL parameter support** - Deep-link to views via `?view=clients`, `?view=time-machine`, or `?view=client-history`
+- **URL parameter support** - Deep-link to views via `?view=clients`, `?view=time-machine`, `?view=client-history`, or `?infra=1`
 
 ## Architecture
 
@@ -65,7 +82,7 @@ Single-page app with no build step:
 | File | Purpose |
 |------|---------|
 | `index.html` | Shell markup, sidebar, top bar, SVG canvas, clients table, detail panel |
-| `app.js` | Layout engine, connection drawing, animations, view switching, table rendering, Time Machine, Client History |
+| `app.js` | Layout engine, connection drawing, animations, view switching, table rendering, Time Machine, Client History, Infrastructure Mode |
 | `styles.css` | All styling including dark/light themes, card designs, pill colors, table styles |
 
 ### Layout Engine
@@ -92,6 +109,7 @@ Then open `http://localhost:3457` in a browser.
 
 ## Dependencies
 
+- [D3.js v7](https://d3js.org) - Tree layout and SVG rendering for Infrastructure Mode (loaded via CDN)
 - [Inter + JetBrains Mono](https://fonts.google.com) - Google Fonts (loaded via CDN)
 - [Phosphor Icons](https://phosphoricons.com) - Icon set (loaded via CDN)
 
