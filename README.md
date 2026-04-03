@@ -21,7 +21,7 @@ A real-time network topology visualization for Intellifi SmartOS mesh networks. 
 
 ### Clients Table View
 
-![Clients Table](screenshots/clients-table.png)
+![Clients Table](screenshots/clients-tablev3.png)
 
 - **Sortable client table** - All clients listed in a sortable table with columns for status, name, type, connected AP, band, QoE score, Wi-Fi generation, throughput, and connected time
 - **Color-coded badges** - Type (phone, laptop, IoT, etc.), Band (2.4/5/6 GHz, Ethernet), and Wi-Fi generation badges use the same color palette as the topology map
