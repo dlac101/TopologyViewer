@@ -83,7 +83,7 @@ const TOPOLOGY = {
             hops: 1,
             connectionType: 'wireless',
             backhaulBand: '6 GHz',
-            backhaul: { speed: '5765 Mbps', utilization: 38, rssi: -58, snr: 19, channel: 37, wifiVersion: '7', channelWidth: '320 MHz' },
+            backhaul: { speed: '5765 Mbps', txRate: 3459, rxRate: 2305, txMCS: 'EHT-MCS11', rxMCS: 'EHT-MCS9', utilization: 38, airtime: 72, rssi: -58, snr: 19, channel: 37, wifiVersion: '7', channelWidth: '320 MHz' },
             statusColor: 'orange',
             uptime: '34d 7h 18m',
             status: 'online',
@@ -111,7 +111,7 @@ const TOPOLOGY = {
             hops: 2,
             connectionType: 'wireless',
             backhaulBand: '6 GHz',
-            backhaul: { speed: '2402 Mbps', utilization: 14, rssi: -38, snr: 43, channel: 37, wifiVersion: '6E' },
+            backhaul: { speed: '2402 Mbps', txRate: 2402, rxRate: 1801, txMCS: 'HE-MCS11', rxMCS: 'HE-MCS8', utilization: 14, airtime: 88, rssi: -38, snr: 43, channel: 37, wifiVersion: '6E', channelWidth: '160 MHz' },
             statusColor: 'green',
             uptime: '34d 7h 15m',
             status: 'online',
@@ -138,7 +138,7 @@ const TOPOLOGY = {
             parentId: 'gateway',
             hops: 1,
             connectionType: 'ethernet',
-            backhaul: { speed: '10000 Mbps', utilization: 12 },
+            backhaul: { speed: '10000 Mbps', txRate: 10000, rxRate: 10000, utilization: 12, airtime: null, duplex: 'Full', errRate: 0, errPer: '0.000%' },
             statusColor: 'green',
             uptime: '34d 7h 12m',
             status: 'online',
@@ -166,7 +166,7 @@ const TOPOLOGY = {
             hops: 2,
             connectionType: 'wireless',
             backhaulBand: '6 GHz',
-            backhaul: { speed: '5765 Mbps', utilization: 14, rssi: -42, snr: 38, channel: 37, wifiVersion: '7', channelWidth: '320 MHz' },
+            backhaul: { speed: '5765 Mbps', txRate: 4804, rxRate: 3459, txMCS: 'EHT-MCS13', rxMCS: 'EHT-MCS11', utilization: 14, airtime: 91, rssi: -42, snr: 38, channel: 37, wifiVersion: '7', channelWidth: '320 MHz' },
             statusColor: 'green',
             uptime: '34d 7h 10m',
             status: 'online',
@@ -5028,13 +5028,1040 @@ function bindClientHistoryEvents() {
     }
 }
 
+// ── Infrastructure Mode ──────────────────────────────
+// N×N signal matrix: every mesh node's view of every other node
+// In production, this comes from usteer neighbor reports.
+// For now, mock data with realistic asymmetric RSSI values.
+
+let infraActive = false;
+let infraSelectedLink = null;
+let infraTooltipEl = null;
+let infraTooltipShowTimer = null;
+let infraTooltipHideTimer = null;
+
+function infraGetNodes() {
+    const nodes = [];
+    const g = TOPOLOGY.gateway;
+    nodes.push({
+        id: g.id, name: g.name, model: g.model,
+        role: 'Gateway', mac: g.mac, ip: g.ip,
+        connectionType: 'root', backhaul: null,
+        wifiRadios: g.wifiRadios || [],
+    });
+    TOPOLOGY.satellites.forEach(s => {
+        nodes.push({
+            id: s.id, name: s.name, model: s.model,
+            role: 'Satellite', mac: s.mac, ip: s.ip,
+            parentId: s.parentId,
+            connectionType: s.connectionType,
+            backhaulBand: s.backhaulBand || null,
+            backhaul: s.backhaul || null,
+            wifiRadios: s.wifiRadios || [],
+        });
+    });
+    return nodes;
+}
+
+// Mock N×N signal matrix: signalMatrix[observerId][heardId] = { rssi, snr, band, channel }
+function infraBuildSignalMatrix(nodes) {
+    const matrix = {};
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    // Seed known backhaul links from topology
+    const knownLinks = {};
+    nodes.forEach(n => {
+        if (n.backhaul && n.parentId) {
+            const key = `${n.id}|${n.parentId}`;
+            // Look up spatial streams from the device's radio matching backhaul band
+            const bhBand = n.backhaulBand || '';
+            const matchRadio = (n.wifiRadios || []).find(r => r.band === bhBand);
+            knownLinks[key] = {
+                rssi: n.backhaul.rssi || null,
+                snr: n.backhaul.snr || null,
+                band: bhBand || 'Ethernet',
+                channel: n.backhaul.channel || null,
+                channelWidth: n.backhaul.channelWidth || null,
+                wifiVersion: n.backhaul.wifiVersion || null,
+                speed: n.backhaul.speed || null,
+                txRate: n.backhaul.txRate || null,
+                rxRate: n.backhaul.rxRate || null,
+                txMCS: n.backhaul.txMCS || null,
+                rxMCS: n.backhaul.rxMCS || null,
+                duplex: n.backhaul.duplex || null,
+                errRate: n.backhaul.errRate ?? null,
+                errPer: n.backhaul.errPer || null,
+                utilization: n.backhaul.utilization ?? null,
+                airtime: n.backhaul.airtime ?? null,
+                streams: matchRadio?.streams || null,
+                isBackhaul: true,
+                connectionType: n.connectionType,
+            };
+        }
+    });
+
+    // Deterministic pseudo-random from two node IDs
+    function seedRand(a, b) {
+        let h = 0;
+        const s = a < b ? a + b : b + a;
+        for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+        return function() { h = (h * 16807 + 7) & 0x7fffffff; return (h & 0xffff) / 0xffff; };
+    }
+
+    // Physical distance proxy: based on hop counts and parent relationships
+    function estimateDistance(a, b) {
+        if (a.id === b.id) return 0;
+        // Direct parent-child
+        if (a.parentId === b.id || b.parentId === a.id) return 1;
+        // Siblings (same parent)
+        if (a.parentId && a.parentId === b.parentId) return 1.5;
+        // 2 hops apart
+        const aParent = nodeMap[a.parentId];
+        const bParent = nodeMap[b.parentId];
+        if (aParent && aParent.parentId === b.id) return 2;
+        if (bParent && bParent.parentId === a.id) return 2;
+        if (aParent && bParent && aParent.id === bParent.parentId) return 2.5;
+        if (aParent && bParent && bParent.id === aParent.parentId) return 2.5;
+        return 3;
+    }
+
+    nodes.forEach(observer => {
+        matrix[observer.id] = {};
+        nodes.forEach(heard => {
+            if (observer.id === heard.id) {
+                matrix[observer.id][heard.id] = null; // self
+                return;
+            }
+
+            // Check if this is a known backhaul link
+            const fwdKey = `${observer.id}|${heard.id}`;
+            const revKey = `${heard.id}|${observer.id}`;
+            if (knownLinks[fwdKey]) {
+                matrix[observer.id][heard.id] = { ...knownLinks[fwdKey] };
+                return;
+            }
+            if (knownLinks[revKey]) {
+                // Reverse direction: RSSI is asymmetric, offset by a few dB
+                const link = knownLinks[revKey];
+                if (link.connectionType === 'ethernet') {
+                    matrix[observer.id][heard.id] = { ...link };
+                } else {
+                    const rand = seedRand(observer.id, heard.id);
+                    const offset = Math.round((rand() - 0.5) * 8); // +/- 4 dB asymmetry
+                    matrix[observer.id][heard.id] = {
+                        rssi: link.rssi ? link.rssi + offset : null,
+                        snr: link.snr ? Math.max(5, link.snr + offset) : null,
+                        band: link.band,
+                        channel: link.channel,
+                        channelWidth: link.channelWidth,
+                        wifiVersion: link.wifiVersion,
+                        streams: link.streams || null,
+                        speed: null,
+                        isBackhaul: true,
+                        connectionType: 'wireless',
+                    };
+                }
+                return;
+            }
+
+            // Generate mock signal based on estimated distance
+            const dist = estimateDistance(observer, heard);
+            const rand = seedRand(observer.id, heard.id);
+            // Ethernet-backhauled nodes that are far apart may still hear each other on 6 GHz
+            const baseRssi = -30 - (dist * 15) - Math.round(rand() * 10);
+            const rssi = Math.max(-90, Math.min(-25, baseRssi));
+            const noise = -92 + Math.round(rand() * 5);
+            const snr = Math.max(3, rssi - noise);
+
+            const obs6gRadio = (observer.wifiRadios || []).find(r => r.band === '6 GHz');
+            matrix[observer.id][heard.id] = {
+                rssi,
+                snr,
+                band: '6 GHz',
+                channel: 37,
+                channelWidth: '320 MHz',
+                wifiVersion: '7',
+                streams: obs6gRadio?.streams || null,
+                speed: null,
+                isBackhaul: false,
+                connectionType: 'wireless',
+            };
+        });
+    });
+    return matrix;
+}
+
+function infraRssiClass(rssi) {
+    if (rssi === null || rssi === undefined) return 'no-signal';
+    if (rssi >= -45) return 'excellent';
+    if (rssi >= -55) return 'good';
+    if (rssi >= -67) return 'fair';
+    if (rssi >= -80) return 'weak';
+    return 'poor';
+}
+
+// Signal-quality color: vivid solid hex for all wireless links
+function infraRssiColor(rssi) {
+    if (rssi === null || rssi === undefined) return '#64748b'; // slate gray
+    if (rssi >= -45) return '#22c55e'; // green  – excellent
+    if (rssi >= -55) return '#84cc16'; // lime   – good
+    if (rssi >= -67) return '#eab308'; // yellow – fair
+    if (rssi >= -80) return '#f97316'; // orange – weak
+    return '#ef4444';                  // red    – poor
+}
+
+// Same scale but with configurable alpha (for glow layers, heard links)
+function infraRssiColorAlpha(rssi, alpha) {
+    const hex = infraRssiColor(rssi);
+    // Parse hex to rgb
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function infraRssiTextColor(rssi) {
+    if (rssi === null || rssi === undefined) return 'var(--text-secondary)';
+    if (rssi >= -45) return '#86efac'; // light green
+    if (rssi >= -55) return '#bef264'; // light lime
+    if (rssi >= -67) return '#fde047'; // light yellow
+    if (rssi >= -80) return '#fdba74'; // light orange
+    return '#fca5a5';                  // light red
+}
+
+// Format Mbps to compact string: 5765 -> "5.8 Gbps", 72 -> "72 Mbps"
+// Accepts number or string like "5765 Mbps"
+function infraFmtRate(v) {
+    if (!v) return '';
+    const mbps = typeof v === 'string' ? parseInt(String(v).match(/(\d+)/)?.[1], 10) : v;
+    if (!mbps || isNaN(mbps)) return '';
+    if (mbps >= 1000) return (mbps / 1000).toFixed(1).replace(/\.0$/, '') + ' Gbps';
+    return mbps + ' Mbps';
+}
+const infraFormatSpeed = infraFmtRate; // alias for call sites using string input
+
+// Clean node name for display: "KITCHEN_AP" -> "KITCHEN"
+function infraDisplayName(name) {
+    return (name || '').replace(/_/g, ' ').replace(' AP', '');
+}
+
+// ── Tree View (D3) ─────────────────────────────────
+function infraRenderTree(nodes, matrix) {
+    const container = document.getElementById('infraRadial');
+    container.innerHTML = '';
+
+    const width = container.clientWidth || 600;
+    const height = container.clientHeight || 500;
+    const pad = 60;
+
+    const svg = d3.select(container).append('svg')
+        .attr('width', width).attr('height', height);
+
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    // ── Build hierarchy from parent-child relationships ──
+    const gateway = nodes.find(n => n.role === 'Gateway');
+    function buildTree(parentId) {
+        const node = nodeMap[parentId];
+        const children = nodes.filter(n => n.parentId === parentId);
+        return {
+            ...node,
+            r: node.role === 'Gateway' ? 56 : 48,
+            children: children.length ? children.map(c => buildTree(c.id)) : undefined,
+        };
+    }
+    const treeData = buildTree(gateway.id);
+    const root = d3.hierarchy(treeData);
+    const treeLayout = d3.tree().size([width - pad * 2, (height - pad * 3) * 0.5]);
+    treeLayout(root);
+
+    // Offset so root is at top center
+    const offsetX = pad;
+    const offsetY = pad + 20;
+
+    // ── Helpers ──
+    function clipLine(x1, y1, x2, y2, r1, r2) {
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len === 0) return { x1, y1, x2, y2 };
+        const ux = dx / len, uy = dy / len;
+        return { x1: x1 + ux * r1, y1: y1 + uy * r1, x2: x2 - ux * r2, y2: y2 - uy * r2 };
+    }
+    function infraLinkLabel(link) {
+        if (!link) return '';
+        if (link.connectionType === 'ethernet') {
+            const spd = infraFmtRate(link.speed);
+            return spd ? spd + ' Ethernet' : 'Ethernet';
+        }
+        const parts = [];
+        if (link.wifiVersion) parts.push('Wi-Fi ' + link.wifiVersion);
+        if (link.band) parts.push(link.band);
+        if (link.streams) parts.push(link.streams);
+        if (link.channelWidth) parts.push(link.channelWidth);
+        return parts.join(' | ') || '';
+    }
+    function infraLinkStatus(link) {
+        if (!link) return '';
+        const status = link.connectionType === 'ethernet' ? 'Backhaul Active'
+            : (link.isBackhaul ? 'Backhaul Active' : 'Available');
+        if (infraMatrixMode === 'QoE') {
+            return status + ' / QoE: ' + infraLinkQoE(link);
+        } else {
+            const rssi = link.rssi;
+            if (link.connectionType === 'ethernet' || rssi === null) return status;
+            return status + ' / RSSI: ' + rssi + ' dBm';
+        }
+    }
+
+    // ── Tooltip (uses module-scope infraTooltipEl) ──
+    function infraGetTooltip() {
+        if (!infraTooltipEl) {
+            infraTooltipEl = document.createElement('div');
+            infraTooltipEl.className = 'infra-link-tooltip';
+            document.body.appendChild(infraTooltipEl);
+        }
+        return infraTooltipEl;
+    }
+    function infraShowLinkTooltip(e, fromId, toId) {
+        // Suppress tooltip on dimmed links when a node is focused
+        if (infraFocusedNode && fromId !== infraFocusedNode && toId !== infraFocusedNode) return;
+        clearTimeout(infraTooltipHideTimer);
+        clearTimeout(infraTooltipShowTimer);
+        // Small show delay to avoid flicker on fast mouse movement
+        infraTooltipShowTimer = setTimeout(() => {
+            // Use whichever direction has richer data (forward link has PHY rates)
+            const fwd = matrix[fromId]?.[toId];
+            const rev = matrix[toId]?.[fromId];
+            const link = (fwd?.speed || fwd?.txRate) ? fwd : (rev?.speed || rev?.txRate) ? rev : fwd;
+            if (!link) return;
+            // Swap names if we flipped direction
+            const flipped = link === rev;
+            const actualFrom = flipped ? toId : fromId;
+            const actualTo = flipped ? fromId : toId;
+            const fromName = infraDisplayName(nodeMap[actualFrom]?.name);
+            const toName = infraDisplayName(nodeMap[actualTo]?.name);
+            const isEth = link.connectionType === 'ethernet';
+            const tip = infraGetTooltip();
+            // Helpers: single pair and double pair rows
+            const r1 = (l, v) => `<tr><td class="infra-tt-lbl">${l}</td><td class="infra-tt-val" colspan="3">${v}</td></tr>`;
+            const r2 = (l1, v1, l2, v2) => `<tr><td class="infra-tt-lbl">${l1}</td><td class="infra-tt-val">${v1}</td><td class="infra-tt-lbl">${l2}</td><td class="infra-tt-val">${v2}</td></tr>`;
+            // Inline meter pill with percentage text inside
+            function meter(label, pct, color) {
+                if (pct === null || pct === undefined) return '';
+                return `<div class="infra-tt-meter">`
+                    + `<span class="infra-tt-meter-lbl">${label}</span>`
+                    + `<div class="infra-tt-meter-bar">`
+                    + `<div class="infra-tt-meter-fill" style="width:${pct}%;background:${color}"></div>`
+                    + `<span class="infra-tt-meter-pct">${pct}%</span>`
+                    + `</div></div>`;
+            }
+            function meterColor(pct, invert) {
+                // invert=true means higher is better (airtime avail), false means higher is worse (utilization)
+                const v = invert ? pct : 100 - pct;
+                if (v >= 70) return '#22c55e';
+                if (v >= 40) return '#eab308';
+                return '#ef4444';
+            }
+
+            let html = `<div class="infra-tt-title">${fromName} &rarr; ${toName}</div><table class="infra-tt-tbl">`;
+            if (isEth) {
+                const speed = infraFormatSpeed(link.speed) || '10 Gbps';
+                html += r1('Type', `${speed} Ethernet`);
+                const duplex = link.duplex || 'Full';
+                const util = link.utilization !== null ? link.utilization + '%' : '--';
+                html += r2('Duplex', duplex, 'Util', util);
+                const errColor = link.errRate === 0 ? '#86efac' : '#fca5a5';
+                const errStr = link.errPer !== null ? `<span style="color:${errColor}">${link.errPer}</span>` : '--';
+                html += r2('QoE', `<span style="font-weight:600">${infraLinkQoE(link)}</span>`, 'Errors', errStr);
+                html += '</table>';
+                if (link.utilization !== null) {
+                    html += '<div class="infra-tt-meters">';
+                    html += meter('Util', link.utilization, meterColor(link.utilization, false));
+                    html += '</div>';
+                }
+            } else {
+                const parts = [];
+                if (link.wifiVersion) parts.push('Wi-Fi ' + link.wifiVersion);
+                if (link.band) parts.push(link.band);
+                if (link.streams) parts.push(link.streams);
+                if (link.channelWidth) parts.push(link.channelWidth);
+                if (parts.length) html += r1('Link', parts.join(' | '));
+                // QoE/RSSI + SNR on one row
+                if (infraMatrixMode === 'QoE') {
+                    const qoeColor = infraRssiTextColor(link.rssi);
+                    const qoeVal = `<span style="color:${qoeColor};font-weight:600">${infraLinkQoE(link)}</span>`;
+                    const snrVal = link.snr !== null ? link.snr + ' dB' : '--';
+                    html += r2('QoE', qoeVal, 'SNR', snrVal);
+                } else {
+                    const rssiVal = link.rssi !== null ? `<span style="color:${infraRssiTextColor(link.rssi)};font-weight:600">${link.rssi} dBm</span>` : '--';
+                    const snrVal = link.snr !== null ? link.snr + ' dB' : '--';
+                    html += r2('RSSI', rssiVal, 'SNR', snrVal);
+                }
+                // Channel + Noise on one row
+                const chVal = link.channel ? 'Ch ' + link.channel : '--';
+                const noiseVal = link.noise !== null && link.noise !== undefined ? link.noise + ' dBm' : (link.rssi && link.snr ? (link.rssi - link.snr) + ' dBm' : '--');
+                html += r2('Channel', chVal, 'Noise', noiseVal);
+                // Max rate + role on one row
+                if (link.speed) {
+                    const role = link.isBackhaul ? 'Backhaul' : 'Heard';
+                    html += r2('Max', infraFormatSpeed(link.speed), 'Role', `<span style="opacity:0.7">${role}</span>`);
+                }
+                // TX/RX PHY rates paired, MCS paired
+                if (link.txRate || link.rxRate) {
+                    const txRate = link.txRate ? infraFmtRate(link.txRate) : '--';
+                    const rxRate = link.rxRate ? infraFmtRate(link.rxRate) : '--';
+                    html += r2('TX PHY', txRate, 'RX PHY', rxRate);
+                    if (link.txMCS || link.rxMCS) {
+                        const txMcs = link.txMCS ? `<span style="opacity:0.55">${link.txMCS}</span>` : '--';
+                        const rxMcs = link.rxMCS ? `<span style="opacity:0.55">${link.rxMCS}</span>` : '--';
+                        html += r2('TX MCS', txMcs, 'RX MCS', rxMcs);
+                    }
+                }
+                // Airtime + Utilization meters
+                html += '</table>';
+                if (link.airtime !== null || link.utilization !== null) {
+                    html += '<div class="infra-tt-meters">';
+                    if (link.airtime !== null) html += meter('Airtime', link.airtime, meterColor(link.airtime, true));
+                    if (link.utilization !== null) html += meter('Util', link.utilization, meterColor(link.utilization, false));
+                    html += '</div>';
+                }
+            }
+            tip.innerHTML = html;
+            tip.style.display = 'block';
+            infraPositionTooltip(e, tip);
+            requestAnimationFrame(() => tip.classList.add('visible'));
+        }, 80);
+    }
+    function infraPositionTooltip(e, tip) {
+        const p = 14;
+        const rect = tip.getBoundingClientRect();
+        let x = e.clientX + p, y = e.clientY - p - (rect.height || 60);
+        if (x + (rect.width || 200) > window.innerWidth - 10) x = e.clientX - p - (rect.width || 200);
+        if (y < 10) y = e.clientY + p;
+        tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    }
+    function infraHideLinkTooltip() {
+        clearTimeout(infraTooltipShowTimer);
+        clearTimeout(infraTooltipHideTimer);
+        infraTooltipHideTimer = setTimeout(() => {
+            if (infraTooltipEl) {
+                infraTooltipEl.classList.remove('visible');
+                infraTooltipEl.style.display = 'none';
+            }
+        }, 100);
+    }
+    // Force-hide tooltip when links are redrawn (prevents stale tooltips)
+    function infraForceHideTooltip() {
+        clearTimeout(infraTooltipShowTimer);
+        clearTimeout(infraTooltipHideTimer);
+        if (infraTooltipEl) {
+            infraTooltipEl.classList.remove('visible');
+            infraTooltipEl.style.display = 'none';
+        }
+    }
+
+    // ── Label collision avoidance ──
+    const placedLabels = [];
+    function labelsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+        return Math.abs(ax - bx) < (aw + bw) / 2 + 4 && Math.abs(ay - by) < (ah + bh) / 2 + 2;
+    }
+    function nudgeLabel(lx, ly, w, h) {
+        const offsets = [
+            [0, 0], [0, -h], [0, h], [-w * 0.6, 0], [w * 0.6, 0],
+            [-w * 0.4, -h * 0.8], [w * 0.4, -h * 0.8], [-w * 0.4, h * 0.8], [w * 0.4, h * 0.8],
+            [0, -h * 1.8], [0, h * 1.8],
+        ];
+        for (const [ox, oy] of offsets) {
+            const nx = lx + ox, ny = ly + oy;
+            let collision = false;
+            for (const p of placedLabels) {
+                if (labelsOverlap(nx, ny, w, h, p.x, p.y, p.w, p.h)) { collision = true; break; }
+            }
+            if (!collision) return { x: nx, y: ny };
+        }
+        return { x: lx, y: ly };
+    }
+    function addLinkLabel(group, cl, text, color, statusText) {
+        if (!text) return;
+        const hasStatus = !!statusText;
+        const mx = (cl.x1 + cl.x2) / 2, my = (cl.y1 + cl.y2) / 2;
+        const dx = cl.x2 - cl.x1, dy = cl.y2 - cl.y1;
+        const linkLen = Math.sqrt(dx * dx + dy * dy) || 1;
+        const estWidth = Math.max(text.length, (statusText || '').length) * 8.2 + 16;
+        const estHeight = hasStatus ? 38 : 22;
+        const verticalness = Math.abs(dy) / linkLen;
+        let lx, ly;
+        if (verticalness > 0.85) { lx = mx; ly = my; }
+        else {
+            let px = -dy / linkLen, py = dx / linkLen;
+            if (px + py > 0) { px = -px; py = -py; }
+            const minClearance = estWidth / 2 + 8;
+            let offsetDist = 14;
+            if (linkLen < minClearance * 2.5) offsetDist = Math.max(20, minClearance * 0.6);
+            lx = mx + px * offsetDist; ly = my + py * offsetDist;
+        }
+        const nudged = nudgeLabel(lx, ly, estWidth, estHeight);
+        lx = nudged.x; ly = nudged.y;
+        placedLabels.push({ x: lx, y: ly, w: estWidth, h: estHeight });
+        const labelG = group.append('g').attr('transform', `translate(${lx},${ly})`).attr('pointer-events', 'none');
+        labelG.append('rect').attr('x', -estWidth / 2).attr('y', -estHeight / 2)
+            .attr('width', estWidth).attr('height', estHeight)
+            .attr('rx', 10).attr('ry', 10).attr('fill', '#1a1f2e').attr('fill-opacity', 0.92);
+        const textY = hasStatus ? -7 : 0;
+        labelG.append('text').attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
+            .attr('y', textY).attr('font-size', '14px').attr('font-family', 'Inter, sans-serif')
+            .attr('font-weight', '600').attr('fill', color).text(text);
+        if (hasStatus) {
+            labelG.append('text').attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
+                .attr('y', 11).attr('font-size', '12px').attr('font-family', 'Inter, sans-serif')
+                .attr('font-weight', '500').attr('fill', 'rgba(255,255,255,0.45)')
+                .text(statusText);
+        }
+    }
+
+    // 75%-size label placed directly at a point (for heard/available links)
+    function addSmallLinkLabel(group, x, y, text, color, statusText) {
+        if (!text) return;
+        const hasStatus = !!statusText;
+        const charW = 6.2; // ~10px font
+        const estWidth = Math.max(text.length, (statusText || '').length) * charW + 14;
+        const estHeight = hasStatus ? 28 : 18;
+        const labelG = group.append('g').attr('transform', `translate(${x},${y})`).attr('pointer-events', 'none');
+        labelG.append('rect').attr('x', -estWidth / 2).attr('y', -estHeight / 2)
+            .attr('width', estWidth).attr('height', estHeight)
+            .attr('rx', 8).attr('ry', 8).attr('fill', '#1a1f2e').attr('fill-opacity', 0.9);
+        const textY = hasStatus ? -5 : 0;
+        labelG.append('text').attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
+            .attr('y', textY).attr('font-size', '10px').attr('font-family', 'Inter, sans-serif')
+            .attr('font-weight', '600').attr('fill', color).text(text);
+        if (hasStatus) {
+            labelG.append('text').attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
+                .attr('y', 8).attr('font-size', '9px').attr('font-family', 'Inter, sans-serif')
+                .attr('font-weight', '500').attr('fill', 'rgba(255,255,255,0.4)')
+                .text(statusText);
+        }
+    }
+
+    // ── SVG groups (paint order = stack order) ──
+    const heardGroup = svg.append('g');   // heard arcs (visual, behind everything)
+    const linksGroup = svg.append('g');   // backhaul tree links (visual)
+    const labelsGroup = svg.append('g');  // link labels
+    const hitGroup = svg.append('g');     // invisible hit areas (on top of labels for reliable hover)
+    const nodesGroup = svg.append('g');   // nodes on top of everything
+
+    // Pre-compute node positions for reuse
+    const allNodes = root.descendants();
+
+    let infraFocusedNode = null;
+
+    // ── Reusable link drawing function ──
+    // focusId = null: show all links normally
+    // focusId = nodeId: highlight links involving that node, dim all others
+    function drawLinks(focusId) {
+        infraForceHideTooltip();
+        heardGroup.selectAll('*').remove();
+        linksGroup.selectAll('*').remove();
+        labelsGroup.selectAll('*').remove();
+        hitGroup.selectAll('*').remove();
+        placedLabels.length = 0;
+        // Seed label collision with node positions
+        allNodes.forEach(d => {
+            placedLabels.push({ x: d.x + offsetX, y: d.y + offsetY, w: d.data.r * 2 + 10, h: d.data.r * 2 + 10 });
+        });
+        infraFocusedNode = focusId;
+
+        // ── Heard (non-backhaul) arcs ──
+        const drawnPairs = new Set();
+        allNodes.forEach(srcD => {
+            allNodes.forEach(tgtD => {
+                if (srcD === tgtD) return;
+                const pairKey = [srcD.data.id, tgtD.data.id].sort().join('|');
+                if (drawnPairs.has(pairKey)) return;
+                if (srcD.parent === tgtD || tgtD.parent === srcD) return;
+                const link = matrix[srcD.data.id]?.[tgtD.data.id];
+                if (!link || link.isBackhaul) return;
+                drawnPairs.add(pairKey);
+
+                const involves = !focusId || srcD.data.id === focusId || tgtD.data.id === focusId;
+                const dimFactor = involves ? 1 : 0.15;
+
+                const sx = srcD.x + offsetX, sy = srcD.y + offsetY;
+                const tx = tgtD.x + offsetX, ty = tgtD.y + offsetY;
+                const color = infraRssiColorAlpha(link.rssi, 0.35 * dimFactor);
+                const dx = tx - sx, dy = ty - sy;
+                const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                // Perpendicular unit vector
+                let px = -dy / len, py = dx / len;
+                // Bulge direction: adjacent-tier (depth diff=1) arcs bulge outward
+                // to separate from backhaul curves. Same-tier and skip-tier arcs
+                // (depth diff=0 or 2+) bulge inward to avoid label collisions.
+                const depthDiff = Math.abs(srcD.depth - tgtD.depth);
+                const bulgeOutward = depthDiff === 1;
+                const midX = (sx + tx) / 2;
+                const centerTreeX = width / 2 + pad;
+                if (bulgeOutward) {
+                    if ((midX - centerTreeX) * px < 0) { px = -px; py = -py; }
+                } else {
+                    // Inward: toward center X
+                    if ((midX - centerTreeX) * px > 0) { px = -px; py = -py; }
+                }
+                const bulge = len * 0.3;
+                const cx2 = (sx + tx) / 2 + px * bulge;
+                const cy2 = (sy + ty) / 2 + py * bulge;
+                const arcPath = `M${sx},${sy} Q${cx2},${cy2} ${tx},${ty}`;
+                // Fat invisible hit area in top layer for reliable hover
+                hitGroup.append('path')
+                    .attr('d', arcPath)
+                    .attr('fill', 'none').attr('stroke', 'transparent').attr('stroke-width', 18)
+                    .attr('cursor', involves ? 'pointer' : 'default')
+                    .on('click', () => infraSelectLink(srcD.data.id, tgtD.data.id, nodes, matrix))
+                    .on('mouseenter', (e) => infraShowLinkTooltip(e, srcD.data.id, tgtD.data.id))
+                    .on('mousemove', (e) => { if (infraTooltipEl) infraPositionTooltip(e, infraTooltipEl); })
+                    .on('mouseleave', () => infraHideLinkTooltip());
+                heardGroup.append('path')
+                    .attr('d', arcPath)
+                    .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2)
+                    .attr('stroke-dasharray', '3,3').attr('pointer-events', 'none');
+                if (involves) {
+                    const arcMidX = (sx + 2 * cx2 + tx) / 4;
+                    const arcMidY = (sy + 2 * cy2 + ty) / 4;
+                    const heardLabel = infraLinkLabel(link);
+                    if (heardLabel) {
+                        addSmallLinkLabel(labelsGroup, arcMidX, arcMidY,
+                            heardLabel, infraRssiColorAlpha(link.rssi, 0.5), infraLinkStatus(link));
+                    }
+                }
+            });
+        });
+
+        // ── Backhaul tree links ──
+        root.links().forEach(linkD => {
+            const parentNode = linkD.source.data;
+            const childNode = linkD.target.data;
+            const link = matrix[childNode.id]?.[parentNode.id] || matrix[parentNode.id]?.[childNode.id];
+            const isEth = link?.connectionType === 'ethernet';
+            const rssi = link?.rssi ?? null;
+
+            const involves = !focusId || parentNode.id === focusId || childNode.id === focusId;
+            const dimFactor = involves ? 1 : 0.15;
+
+            const baseColor = isEth ? 'rgba(34,211,238,0.7)' : infraRssiColor(rssi);
+            const color = involves ? baseColor : (isEth ? 'rgba(34,211,238,0.1)' : infraRssiColorAlpha(rssi, 0.12));
+
+            const sx = linkD.source.x + offsetX, sy = linkD.source.y + offsetY;
+            const tx = linkD.target.x + offsetX, ty = linkD.target.y + offsetY;
+
+            const pathD = d3.linkVertical()
+                .source(() => [sx, sy + (parentNode.r || 42) + 4])
+                .target(() => [tx, ty - (childNode.r || 36) - 4])();
+
+            // Fat invisible hit area in top layer for reliable hover
+            hitGroup.append('path')
+                .attr('d', pathD)
+                .attr('fill', 'none').attr('stroke', 'transparent').attr('stroke-width', 18)
+                .attr('cursor', involves ? 'pointer' : 'default')
+                .on('click', () => infraSelectLink(parentNode.id, childNode.id, nodes, matrix))
+                .on('mouseenter', (e) => infraShowLinkTooltip(e, parentNode.id, childNode.id))
+                .on('mousemove', (e) => { if (infraTooltipEl) infraPositionTooltip(e, infraTooltipEl); })
+                .on('mouseleave', () => infraHideLinkTooltip());
+
+            if (isEth) {
+                const dx = tx - sx, dy = ty - sy;
+                const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                const px = -dy / len * 3, py = dx / len * 3;
+                const pathL = d3.linkVertical().source(() => [sx + px, sy + (parentNode.r || 42) + 4])
+                    .target(() => [tx + px, ty - (childNode.r || 36) - 4])();
+                const pathR = d3.linkVertical().source(() => [sx - px, sy + (parentNode.r || 42) + 4])
+                    .target(() => [tx - px, ty - (childNode.r || 36) - 4])();
+                linksGroup.append('path').attr('d', pathL).attr('fill', 'none')
+                    .attr('stroke', color).attr('stroke-width', 3).attr('pointer-events', 'none');
+                linksGroup.append('path').attr('d', pathR).attr('fill', 'none')
+                    .attr('stroke', color).attr('stroke-width', 3).attr('pointer-events', 'none');
+            } else {
+                if (involves) {
+                    linksGroup.append('path').attr('d', pathD).attr('fill', 'none')
+                        .attr('stroke', infraRssiColorAlpha(rssi, 0.15)).attr('stroke-width', 8)
+                        .attr('stroke-linecap', 'round').attr('pointer-events', 'none');
+                }
+                linksGroup.append('path').attr('d', pathD).attr('fill', 'none')
+                    .attr('stroke', color).attr('stroke-width', 3)
+                    .attr('stroke-linecap', 'round').attr('pointer-events', 'none');
+            }
+
+            if (link && involves) {
+                const cl = clipLine(sx, sy, tx, ty, (parentNode.r || 42) + 4, (childNode.r || 36) + 4);
+                addLinkLabel(labelsGroup, cl, infraLinkLabel(link), isEth ? '#22d3ee' : baseColor, infraLinkStatus(link));
+            }
+        });
+
+        // Update node visual emphasis
+        nodesGroup.selectAll('g').each(function() {
+            const g = d3.select(this);
+            const nid = g.datum();
+            if (!nid) return;
+            const involves = !focusId || nid === focusId;
+            // Dim stroke and text brightness, but keep fill solid (no transparency)
+            g.select('circle').attr('stroke-opacity', involves ? 1 : 0.4);
+            g.selectAll('text').attr('fill-opacity', involves ? 1 : 0.4);
+        });
+    }
+
+    // ── Focus node handler ──
+    function infraFocusOnNode(nodeId) {
+        if (infraFocusedNode === nodeId) {
+            // Click same node again: reset to show all
+            drawLinks(null);
+            infraHighlightMatrixRow(null);
+        } else {
+            drawLinks(nodeId);
+            infraHighlightMatrixRow(nodeId);
+        }
+    }
+
+    // Expose drawLinks for external callers (toggle handler)
+    container._drawLinks = drawLinks;
+    container._getFocusedNode = () => infraFocusedNode;
+
+    // Initial draw: show all links
+    drawLinks(null);
+
+    // Click SVG background to reset focus
+    svg.on('click', (e) => {
+        if (e.target.tagName === 'svg') {
+            drawLinks(null);
+            infraHighlightMatrixRow(null);
+        }
+    });
+
+    // ── Draw nodes ──
+    root.descendants().forEach(d => {
+        const nx = d.x + offsetX, ny = d.y + offsetY;
+        const isGateway = d.data.role === 'Gateway';
+        const r = d.data.r;
+
+        const g = nodesGroup.append('g')
+            .datum(d.data.id)
+            .attr('transform', `translate(${nx},${ny})`)
+            .attr('cursor', 'pointer')
+            .on('click', (e) => { e.stopPropagation(); infraFocusOnNode(d.data.id); });
+
+        g.append('circle').attr('r', r)
+            .attr('fill', '#1a1f2e')
+            .attr('stroke', isGateway ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.45)')
+            .attr('stroke-width', isGateway ? 3 : 2);
+        g.append('text').attr('y', -16)
+            .attr('class', 'infra-node-sublabel').attr('font-size', '13px')
+            .attr('fill', 'var(--text-secondary)').text(d.data.role);
+        g.append('text').attr('y', 4)
+            .attr('class', 'infra-node-label').attr('font-size', isGateway ? '18px' : '17px')
+            .text(infraDisplayName(d.data.name));
+        g.append('text').attr('y', 22)
+            .attr('class', 'infra-node-sublabel').attr('font-size', '13px')
+            .attr('fill', 'var(--text-secondary)').text(d.data.model || '');
+    });
+}
+
+
+// ── Signal Matrix ────────────────────────────────────
+let infraMatrixMode = 'QoE'; // 'QoE' or 'dBm'
+
+// Compute a QoE score (0-100) for a wireless link based on RSSI and SNR
+function infraLinkQoE(link) {
+    if (!link || link.connectionType === 'ethernet') return 100;
+    const rssi = link.rssi;
+    if (rssi === null || rssi === undefined) return 0;
+    // RSSI component (0-60 points): -30 dBm = 60, -85 dBm = 0
+    const rssiScore = Math.max(0, Math.min(60, ((rssi - (-85)) / ((-30) - (-85))) * 60));
+    // SNR component (0-40 points): 40 dB+ = 40, 5 dB = 0
+    const snr = link.snr ?? Math.max(3, rssi + 92);
+    const snrScore = Math.max(0, Math.min(40, ((snr - 5) / 35) * 40));
+    return Math.round(rssiScore + snrScore);
+}
+function infraQoEClass(score) {
+    if (score >= 80) return 'excellent';
+    if (score >= 60) return 'good';
+    if (score >= 40) return 'fair';
+    if (score >= 20) return 'weak';
+    return 'poor';
+}
+
+function infraRenderMatrix(nodes, matrix) {
+    const container = document.getElementById('infraMatrix');
+    container.innerHTML = '';
+    const n = nodes.length;
+    container.style.gridTemplateColumns = `120px repeat(${n}, 1fr)`;
+    container.style.gridTemplateRows = `auto repeat(${n}, 52px)`;
+
+    // Corner cell
+    const corner = document.createElement('div');
+    corner.className = 'infra-matrix-corner';
+    container.appendChild(corner);
+
+    // Column headers
+    nodes.forEach(node => {
+        const hdr = document.createElement('div');
+        hdr.className = 'infra-matrix-col-hdr';
+        hdr.textContent = infraDisplayName(node.name).split(' ')[0];
+        hdr.title = node.name;
+        container.appendChild(hdr);
+    });
+
+    // Rows
+    nodes.forEach(observer => {
+        // Row header
+        const rowHdr = document.createElement('div');
+        rowHdr.className = 'infra-matrix-row-hdr';
+        rowHdr.textContent = infraDisplayName(observer.name);
+        rowHdr.title = observer.name;
+        rowHdr.style.cursor = 'pointer';
+        rowHdr.addEventListener('click', () => {
+            infraHighlightMatrixRow(observer.id);
+        });
+        container.appendChild(rowHdr);
+
+        // Cells
+        nodes.forEach(heard => {
+            const cell = document.createElement('div');
+            cell.className = 'infra-matrix-cell';
+            cell.dataset.observer = observer.id;
+            cell.dataset.heard = heard.id;
+
+            if (observer.id === heard.id) {
+                cell.classList.add('self');
+                cell.innerHTML = '&mdash;';
+            } else {
+                const link = matrix[observer.id]?.[heard.id];
+                const isEthernet = link?.connectionType === 'ethernet';
+                if (isEthernet) {
+                    cell.classList.add('excellent');
+                    cell.innerHTML = '<span style="font-size:12px">ETH</span>';
+                } else if (infraMatrixMode === 'QoE') {
+                    const qoe = infraLinkQoE(link);
+                    cell.classList.add(infraQoEClass(qoe));
+                    cell.textContent = qoe;
+                } else {
+                    const rssi = link?.rssi ?? null;
+                    cell.classList.add(infraRssiClass(rssi));
+                    cell.textContent = rssi !== null ? rssi : '?';
+                }
+                cell.addEventListener('click', () => {
+                    infraSelectLink(observer.id, heard.id, nodes, matrix);
+                });
+            }
+            container.appendChild(cell);
+        });
+    });
+}
+
+function infraHighlightMatrixRow(nodeId) {
+    const mc = document.getElementById('infraMatrix');
+    if (!mc) return;
+    mc.querySelectorAll('.infra-matrix-cell.selected').forEach(c => c.classList.remove('selected'));
+    mc.querySelectorAll(`.infra-matrix-cell[data-observer="${nodeId}"]`).forEach(c => {
+        if (!c.classList.contains('self')) c.classList.add('selected');
+    });
+}
+
+// ── Detail Card ──────────────────────────────────────
+function infraSelectLink(fromId, toId, nodes, matrix) {
+    // Suppress clicks on dimmed links when a node is focused
+    const radial = document.getElementById('infraRadial');
+    const focused = radial?._getFocusedNode?.();
+    if (focused && fromId !== focused && toId !== focused) return;
+    infraSelectedLink = { from: fromId, to: toId };
+    const card = document.getElementById('infraDetailCard');
+    const fromNode = nodes.find(n => n.id === fromId);
+    const toNode = nodes.find(n => n.id === toId);
+    const link = matrix[fromId]?.[toId];
+    const reverseLink = matrix[toId]?.[fromId];
+
+    if (!link) {
+        card.innerHTML = '<div class="infra-detail-placeholder">No signal data</div>';
+        return;
+    }
+
+    const isEthernet = link.connectionType === 'ethernet';
+    const fromLabel = infraDisplayName(fromNode.name);
+    const toLabel = infraDisplayName(toNode.name);
+
+    let html = `<div class="infra-detail-title">${fromLabel} &rarr; ${toLabel}</div>`;
+
+    if (isEthernet) {
+        html += `
+            <div class="infra-detail-row"><span>Connection</span><span class="infra-detail-val" style="color:#22d3ee">Ethernet</span></div>
+            <div class="infra-detail-row"><span>Speed</span><span class="infra-detail-val">${link.speed || '10 Gbps'}</span></div>
+            <div class="infra-detail-row"><span>Role</span><span class="infra-detail-val">${link.isBackhaul ? 'Active Backhaul' : 'Heard'}</span></div>
+        `;
+    } else {
+        html += `
+            <div class="infra-detail-row"><span>RSSI</span><span class="infra-detail-val" style="color:${infraRssiTextColor(link.rssi)}">${link.rssi !== null ? link.rssi + ' dBm' : 'N/A'}</span></div>
+            <div class="infra-detail-row"><span>SNR</span><span class="infra-detail-val">${link.snr !== null ? link.snr + ' dB' : 'N/A'}</span></div>
+            <div class="infra-detail-row"><span>Band</span><span class="infra-detail-val">${link.band || 'N/A'}</span></div>
+            <div class="infra-detail-row"><span>Channel</span><span class="infra-detail-val">${link.channel || 'N/A'}${link.channelWidth ? ' (' + link.channelWidth + ')' : ''}</span></div>
+            ${link.wifiVersion ? `<div class="infra-detail-row"><span>WiFi Version</span><span class="infra-detail-val">Wi-Fi ${link.wifiVersion}</span></div>` : ''}
+            ${link.speed ? `<div class="infra-detail-row"><span>PHY Rate</span><span class="infra-detail-val">${link.speed}</span></div>` : ''}
+            <div class="infra-detail-row"><span>Role</span><span class="infra-detail-val">${link.isBackhaul ? 'Active Backhaul' : 'Heard (not connected)'}</span></div>
+        `;
+    }
+
+    // Reverse direction
+    if (reverseLink && !isEthernet) {
+        html += `<hr class="infra-detail-divider">`;
+        html += `<div class="infra-detail-subtitle">Reverse: ${toLabel} &rarr; ${fromLabel}</div>`;
+        html += `
+            <div class="infra-detail-row"><span>RSSI</span><span class="infra-detail-val" style="color:${infraRssiTextColor(reverseLink.rssi)}">${reverseLink.rssi !== null ? reverseLink.rssi + ' dBm' : 'N/A'}</span></div>
+            <div class="infra-detail-row"><span>SNR</span><span class="infra-detail-val">${reverseLink.snr !== null ? reverseLink.snr + ' dB' : 'N/A'}</span></div>
+        `;
+        // Asymmetry indicator
+        if (link.rssi !== null && reverseLink.rssi !== null) {
+            const diff = Math.abs(link.rssi - reverseLink.rssi);
+            const asymColor = diff <= 3 ? '#86efac' : diff <= 8 ? '#fde047' : '#fca5a5';
+            html += `<div class="infra-detail-row"><span>Asymmetry</span><span class="infra-detail-val" style="color:${asymColor}">${diff} dB</span></div>`;
+        }
+    }
+
+    card.innerHTML = html;
+
+    // Highlight in matrix
+    const mc = document.getElementById('infraMatrix');
+    if (mc) mc.querySelectorAll('.infra-matrix-cell.selected').forEach(c => c.classList.remove('selected'));
+    const targetCell = mc?.querySelector(`.infra-matrix-cell[data-observer="${fromId}"][data-heard="${toId}"]`);
+    if (targetCell) targetCell.classList.add('selected');
+}
+
+// ── Toggle Logic ─────────────────────────────────────
+function infraToggle() {
+    infraActive = !infraActive;
+    const btn = document.getElementById('infraToggle');
+    const overlay = document.getElementById('infraOverlay');
+    const nodesEl = document.getElementById('topologyNodes');
+    const svgEl = document.getElementById('topologySvg');
+
+    btn.classList.toggle('active', infraActive);
+
+    // Hide/show the topology legend
+    const legend = document.querySelector('.topology-legend');
+
+    if (infraActive) {
+        // Hide normal topology, show infra overlay
+        nodesEl.style.display = 'none';
+        svgEl.style.display = 'none';
+        overlay.style.display = 'grid';
+
+        // Close and hide Device Details panel
+        if (typeof closeDetail === 'function') closeDetail();
+        const detailPanelEl = document.getElementById('detailPanel');
+        if (detailPanelEl) detailPanelEl.style.display = 'none';
+
+        // Swap legend to infra-specific version
+        if (legend) {
+            legend._origHTML = legend.innerHTML;
+            legend.innerHTML = `
+                <div class="legend-section">
+                    <div class="legend-title">CONNECTION</div>
+                    <div class="legend-item">
+                        <span class="legend-line" style="background:#22d3ee;height:2px;position:relative;">
+                            <span style="position:absolute;top:-2px;left:0;right:0;height:2px;background:#22d3ee;"></span>
+                            <span style="position:absolute;top:2px;left:0;right:0;height:2px;background:#22d3ee;"></span>
+                        </span>
+                        <span class="legend-label">Ethernet</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-line" style="background:rgba(255,255,255,0.5);height:2.5px;border-radius:2px;"></span>
+                        <span class="legend-label">Wireless Backhaul</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-line" style="background:transparent;height:1.5px;border-top:1.5px dashed rgba(255,255,255,0.35);"></span>
+                        <span class="legend-label">Heard (Available)</span>
+                    </div>
+                </div>
+                <div class="legend-section">
+                    <div class="legend-title">SIGNAL</div>
+                    <div class="legend-item"><span class="legend-dot" style="border-color:#22c55e;background:rgba(34,197,94,0.25);"></span><span class="legend-label">Excellent</span></div>
+                    <div class="legend-item"><span class="legend-dot" style="border-color:#84cc16;background:rgba(132,204,22,0.2);"></span><span class="legend-label">Good</span></div>
+                    <div class="legend-item"><span class="legend-dot" style="border-color:#eab308;background:rgba(234,179,8,0.2);"></span><span class="legend-label">Fair</span></div>
+                    <div class="legend-item"><span class="legend-dot" style="border-color:#f97316;background:rgba(249,115,22,0.2);"></span><span class="legend-label">Weak</span></div>
+                    <div class="legend-item"><span class="legend-dot" style="border-color:#ef4444;background:rgba(239,68,68,0.2);"></span><span class="legend-label">Poor</span></div>
+                </div>
+            `;
+        }
+
+        // Build data and render
+        const nodes = infraGetNodes();
+        const matrix = infraBuildSignalMatrix(nodes);
+
+        infraRenderTree(nodes, matrix);
+        infraRenderMatrix(nodes, matrix);
+
+        // Store for re-use
+        overlay._infraNodes = nodes;
+        overlay._infraMatrix = matrix;
+    } else {
+        // Restore normal topology
+        nodesEl.style.display = '';
+        svgEl.style.display = '';
+        overlay.style.display = 'none';
+        // Restore Device Details panel visibility
+        const detailPanelEl = document.getElementById('detailPanel');
+        if (detailPanelEl) detailPanelEl.style.display = '';
+        // Restore original legend
+        if (legend && legend._origHTML) {
+            legend.innerHTML = legend._origHTML;
+            delete legend._origHTML;
+        }
+        // Reset detail card
+        document.getElementById('infraDetailCard').innerHTML =
+            '<div class="infra-detail-placeholder">Click a node or matrix cell</div>';
+    }
+}
+
+function bindInfraEvents() {
+    const btn = document.getElementById('infraToggle');
+    if (btn) btn.addEventListener('click', infraToggle);
+
+    // Matrix dBm/QoE toggle
+    // Matrix QoE/dBm toggle switch
+    const matSwitch = document.getElementById('infraMatrixSwitch');
+    if (matSwitch) matSwitch.addEventListener('click', (e) => {
+        const btn = e.target.closest('.infra-matrix-opt');
+        if (!btn || btn.classList.contains('active')) return;
+        matSwitch.querySelectorAll('.infra-matrix-opt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        infraMatrixMode = btn.dataset.mode;
+        const overlay = document.getElementById('infraOverlay');
+        if (overlay._infraNodes) infraRenderMatrix(overlay._infraNodes, overlay._infraMatrix);
+        // Also redraw link labels to reflect QoE/dBm change
+        const radial = document.getElementById('infraRadial');
+        if (radial._drawLinks) radial._drawLinks(radial._getFocusedNode());
+    });
+
+    // Handle window resize
+    let infraResizeTimer;
+    window.addEventListener('resize', () => {
+        if (!infraActive) return;
+        clearTimeout(infraResizeTimer);
+        infraResizeTimer = setTimeout(() => {
+            const overlay = document.getElementById('infraOverlay');
+            if (overlay._infraNodes) {
+                infraRenderTree(overlay._infraNodes, overlay._infraMatrix);
+            }
+        }, 200);
+    });
+}
+
 // ── Init ───────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     init();
     bindTimeMachineEvents();
     bindClientsEvents();
     bindClientHistoryEvents();
+    bindInfraEvents();
     // Auto-switch view via URL param (e.g., ?view=clients)
     const urlView = new URLSearchParams(location.search).get('view');
     if (urlView) switchView(urlView);
+    // Auto-open infra mode via ?infra=1
+    if (new URLSearchParams(location.search).get('infra')) {
+        setTimeout(() => infraToggle(), 300);
+    }
 });

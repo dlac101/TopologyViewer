@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intellifi Topology</title>
-    <link rel="stylesheet" href="styles.css?v=138">
+    <link rel="stylesheet" href="styles.css?v=159">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 </head>
 <body>
     <!-- Sidebar -->
@@ -71,6 +72,10 @@
                 <span class="badge badge-online" id="systemStatus">All Systems Online</span>
             </div>
             <div class="top-bar-right">
+                <button class="infra-toggle" id="infraToggle" title="Infrastructure Mode">
+                    <i class="ph-bold ph-graph"></i>
+                    <span>Infrastructure</span>
+                </button>
                 <div class="stat-pill">
                     <span class="stat-label">Devices</span>
                     <span class="stat-value" id="deviceCount">0</span>
@@ -110,6 +115,24 @@
                 </defs>
             </svg>
             <div class="topology-nodes" id="topologyNodes"></div>
+            <!-- Infrastructure Mode Overlay -->
+            <div class="infra-overlay" id="infraOverlay" style="display:none">
+                <div class="infra-radial" id="infraRadial"></div>
+                <div class="infra-sidebar" id="infraSidebar">
+                    <div class="infra-sidebar-label" id="infraMatrixLabel" style="display:flex;align-items:center;gap:8px;">
+                        <span id="infraMatrixTitle">SIGNAL MATRIX</span>
+                        <div class="infra-matrix-switch" id="infraMatrixSwitch">
+                            <button class="infra-matrix-opt active" data-mode="QoE">QoE</button>
+                            <button class="infra-matrix-opt" data-mode="dBm">RSSI</button>
+                        </div>
+                    </div>
+                    <div class="infra-matrix" id="infraMatrix"></div>
+                    <div class="infra-sidebar-label" style="margin-top:12px">LINK DETAILS</div>
+                    <div class="infra-detail-card" id="infraDetailCard">
+                        <div class="infra-detail-placeholder">Click a node or matrix cell</div>
+                    </div>
+                </div>
+            </div>
             <!-- Time Machine Playback Bar -->
             <div class="tm-playback-bar" id="tmPlaybackBar">
                 <div class="tm-controls">
@@ -205,6 +228,6 @@
         </aside>
     </main>
 
-    <script src="app.js?v=162"></script>
+    <script src="app.js?v=218"></script>
 </body>
 </html>

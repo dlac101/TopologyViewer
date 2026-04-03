@@ -2,3 +2,8 @@
 *.pdf
 *.png
 !screenshots/*.png
+*.tar
+juci-smartrg-wireless/
+.claude/
+mockups.html
+infra-mockups.html
